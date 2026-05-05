@@ -1,0 +1,36 @@
+# Dependências locais (instaladas no build)
+node_modules
+
+# Output de build anterior
+dist
+
+# Arquivos de teste
+test
+coverage
+*.spec.ts
+*.e2e-spec.ts
+
+# Segredos e variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# Docs e configs locais
+CLAUDE.md
+README.md
+*.md
+.prettierrc
+eslint.config.mjs
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Editor
+.vscode
+.idea
