@@ -10,48 +10,15 @@ datasource db {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Enums
-// ─────────────────────────────────────────────────────────────────────────────
-
-enum TriggerSource {
-  PRICE
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// AssetStateSnapshot — Estado de ativos para cálculo de scores
-// ─────────────────────────────────────────────────────────────────────────────
-
-model AssetStateSnapshot {
-  id                String         @id() @default(cuid())
-  assetTicker       String
-  timestamp         DateTime       @default(now())
-  priceActionScore  Float?
-  consolidatedScore Float?
-  triggerSource     TriggerSource?
-  triggerReason     String?        @db.Text
-  weightsUsed       Json?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-
-  @@index([assetTicker])
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // UploadedFile — Controle de arquivos uploads
 // ─────────────────────────────────────────────────────────────────────────────
 
-model UploadedFile {
-  id          String   @id() @default(cuid())
+model File {
+  id          String    @id() @default(uuid())
   filename    String
-  originalName String
-  mimeType    String
+  type        String
   size        Int
-  s3Key       String
-  s3Bucket    String
-  s3Region    String
-  uploadedAt  DateTime @default(now())
+  uploadedAt  DateTime  @default(now())
   processedAt DateTime?
-  status      String   @default("pending") // pending, processed, failed
-
-  @@index([s3Bucket, s3Key])
+  status      String    @default("pending") // pending, processed, failed
 }

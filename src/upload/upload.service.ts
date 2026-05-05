@@ -1,6 +1,7 @@
+import { PrismaService } from '@/prisma/prisma.service';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class UploadService {
@@ -28,7 +29,7 @@ export class UploadService {
 
   async uploadFile(
     file: Express.Multer.File,
-  ): Promise<{ id: string; url: string }> {
+  ): Promise<{ id: string }> {
     const s3Bucket = process.env.S3_BUCKET;
     const s3Region = process.env.S3_REGION;
 
@@ -36,35 +37,36 @@ export class UploadService {
       throw new Error('S3 configuration not found');
     }
 
+    const id = randomUUID()
+
     // Upload para S3
     const command = new PutObjectCommand({
       Bucket: s3Bucket,
-      Key: file.originalname,
+      Key: id,
       Body: file.buffer,
       ContentType: file.mimetype,
     });
 
     const result = await this.s3Client.send(command);
 
-    // Salvar metadados no banco
-    const uploadedFile = await this.prisma.uploadedFile.create({
+    // Criar metadados do arquivo
+    const uploadedFile = await this.prisma.file.create({
       data: {
+        id,
         filename: file.filename,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
+        type: file.mimetype,
         size: file.size,
-        s3Key: result.Key,
-        s3Bucket: s3Bucket,
-        s3Region: s3Region,
+        uploadedAt: new Date(),
+        processedAt: new Date(),
         status: 'processed',
       },
     });
 
-    this.logger.log(`Arquivo ${file.originalname} enviado para S3: ${result.Location}`);
+    this.logger.log(`Arquivo ${file.originalname} enviado para S3`);
 
     return {
       id: uploadedFile.id,
-      url: result.Location,
     };
   }
+
 }

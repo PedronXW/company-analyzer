@@ -6,7 +6,6 @@ import {
   Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Response } from 'express';
 import { UploadService } from './upload.service';
 
 @Controller('upload')
@@ -16,22 +15,21 @@ export class UploadController {
   @Post('file')
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(
-    @Res({ passthrough: true }) res: Response,
     @UploadedFile() file: Express.Multer.File,
-  ): Promise<void> {
+  ): Promise<any> {
     try {
       const result = await this.uploadService.uploadFile(file);
-      res.json({
+      return {
         success: true,
         message: 'Arquivo enviado com sucesso',
         data: result,
-      });
+      };
     } catch (error) {
-      res.status(500).json({
+      return {
         success: false,
         message: 'Erro ao enviar arquivo',
         error: error.message,
-      });
+      };
     }
   }
 }
