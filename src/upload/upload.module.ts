@@ -9,6 +9,9 @@ import { UploadService } from './upload.service';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { UploadController } from './upload.controller';
 
+// Infrastructure Layer - Workers
+import { FileUploadProcessor } from '@/jobs/file-upload.processor';
+
 /**
  * Módulo de upload de arquivos.
  *
@@ -24,7 +27,7 @@ import { UploadController } from './upload.controller';
     }),
   ],
   controllers: [UploadController],
-  providers: [UploadService, FileUploadService],
-  exports: [FileUploadService],
+  providers: [UploadService, FileUploadService, FileUploadProcessor],
+  exports: [UploadService, FileUploadService],
 })
 export class UploadModule { }

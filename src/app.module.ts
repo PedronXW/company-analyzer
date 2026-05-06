@@ -1,6 +1,6 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { BullModule } from '@nestjs/bullmq';
 
 // Infraestrutura
 import { PrismaModule } from './prisma/prisma.module';
@@ -45,4 +45,4 @@ import { UploadModule } from './upload/upload.module';
   controllers: [],
   providers: [],
 })
-export class AppModule {}
+export class AppModule { }
