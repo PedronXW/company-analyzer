@@ -14,11 +14,104 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model File {
-  id          String    @id() @default(uuid())
+  id          String     @id() @default(uuid())
   filename    String
   type        String
   size        Int
-  uploadedAt  DateTime  @default(now())
+  uploadedAt  DateTime   @default(now())
   processedAt DateTime?
-  status      String    @default("pending") // pending, processed, failed
+  status      String     @default("pending") // pending, processed, failed
+  analyses    Analysis[]
+}
+
+// --- NÚCLEO DE IDENTIDADE ---
+
+model Company {
+  id        String   @id @default(uuid())
+  ticker    String   @unique // Ex: PETR4
+  name      String? // Nome Social (Extraído pela IA)
+  sector    String? // Setor de atuação
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  analyses  Analysis[]
+  situation Situation?
+}
+
+// --- NÚCLEO DE ANÁLISE DE DOCUMENTOS (PDF) ---
+
+model Analysis {
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  period        String // Ex: 1T26, 4T25
+  referenceDate DateTime // Data do documento/lançamento
+  status        ReviewStatus @default(PENDING) // A trava de segurança humana
+
+  // Dados Fixos Extraídos (Métricas Financeiras)
+  revenue      Float? // Receita Líquida
+  ebitda       Float? // EBITDA
+  ebitdaMargin Float? // Margem EBITDA (%)
+  netProfit    Float? // Lucro Líquido
+  netMargin    Float? // Margem Líquida (%)
+  netDebt      Float? // Dívida Líquida
+  leverage     Float? // Dívida Líquida / EBITDA (Alavancagem)
+  fco          Float? // Fluxo de Caixa Operacional
+  capex        Float? // Investimentos
+  dividends    Float? // Dividendos declarados no período
+
+  // Inteligência da IA
+  aiSensation Float? // Impacto pontual (0 a 10)
+  aiSummary   String? @db.Text // Resumo da tese da IA para o período
+  projection  Json? // Projeções para o próximo trimestre { profit: X, capex: Y }
+
+  // Controle de Auditoria
+  file       File      @relation(fields: [fileId], references: [id]) // Caminho/URL do PDF processado
+  reviewedAt DateTime?
+  createdAt  DateTime  @default(now())
+  fileId     String
+
+  @@index([companyId])
+  @@index([period])
+}
+
+// --- NÚCLEO DE STATUS DE LONGO PRAZO ---
+
+model Situation {
+  id        String  @id @default(uuid())
+  companyId String  @unique
+  company   Company @relation(fields: [companyId], references: [id])
+
+  healthStatus HealthStatus @default(SAUDAVEL)
+  trend        Trend        @default(ESTAVEL)
+
+  // Visão Sintetizada
+  lastAnalysisId   String? // ID da última análise aprovada que definiu este status
+  futureProjection Json? // Dados consolidados do que esperar { expectedRevenue: 1000, timeframe: "2Q26" }
+
+  updatedAt DateTime @updatedAt
+}
+
+// --- ENUMS (REGRAS DE NEGÓCIO) ---
+
+enum ReviewStatus {
+  PENDING // Aguardando sua revisão humana
+  APPROVED // Validado, agora conta para o histórico e Situation
+  REJECTED // Dado descartado (erro de leitura da IA)
+}
+
+enum HealthStatus {
+  MUITO_SAUDAVEL
+  SAUDAVEL
+  INSTAVEL
+  DOENTE
+  MUITO_DOENTE
+}
+
+enum Trend {
+  MELHORANDO
+  ESTAVEL
+  PIORANDO
 }
