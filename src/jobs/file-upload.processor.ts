@@ -1,8 +1,8 @@
+import { DATA_EXTRACTION } from '@/prisma/prisma.constants';
 import { PrismaService } from '@/prisma/prisma.service';
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
-import type { FileUploadJobData } from '../jobs/jobs.interface';
+import { Job, Queue } from 'bullmq';
 
 /**
  * Processador de jobs de upload de arquivo.
@@ -10,6 +10,10 @@ import type { FileUploadJobData } from '../jobs/jobs.interface';
  * Responsabilidades:
  * - Processar jobs adicionados à fila 'company/upload'
  * - Atualizar status do arquivo para 'processed' no banco de dados
+ * - Disparar job de identificação de empresa após o processamento
+ *
+ * Arquitetura: Infrastructure Layer (FileUploadProcessor)
+ * Separa a infraestrutura de processamento da lógica de negócio.
  */
 @Processor('company/upload', {
   concurrency: 1,
@@ -18,15 +22,29 @@ import type { FileUploadJobData } from '../jobs/jobs.interface';
 export class FileUploadProcessor extends WorkerHost {
   private readonly logger = new Logger(FileUploadProcessor.name);
 
-  constructor(private prisma: PrismaService) {
+  constructor(
+    private prisma: PrismaService,
+    @InjectQueue(DATA_EXTRACTION)
+    private readonly dataExtractionQueue: Queue,
+  ) {
     super();
   }
 
-  async process(job: Job<FileUploadJobData>): Promise<void> {
-    const { fileId, filename, queuedAt } = job.data;
+  async process(job: Job<{ fileId: string }>): Promise<void> {
+    const { fileId } = job.data;
+
+    const file = await this.prisma.file.findUnique({
+      where: {
+        id: fileId
+      }
+    })
+
+    if (!file) {
+      throw new Error('File not found')
+    }
 
     this.logger.log(
-      `Processing file upload job for file ${fileId} (${filename})`,
+      `Processing file upload job for file ${fileId} (${file?.filename})`,
     );
 
     // Simulação de processamento (substituir pela lógica real)
@@ -42,7 +60,24 @@ export class FileUploadProcessor extends WorkerHost {
     });
 
     this.logger.log(
-      `File ${fileId} (${filename}) processed successfully`,
+      `File ${fileId} (${file?.filename}) processed successfully`,
+    );
+
+    // Disparar job de identificação de empresa após o processamento
+    // Passando o S3 URI para Bedrock
+    const s3Bucket = process.env.AWS_S3_BUCKET;
+    const s3Uri = `s3://${s3Bucket}/attachments/${fileId}`;
+
+    // Usar a fila 'company/identification' em vez da fila de upload
+    await this.dataExtractionQueue.add(
+      'company/identification',
+      {
+        fileId,
+      }
+    );
+
+    this.logger.log(
+      `Disparado job de identificação de empresa para file ${fileId} com S3 URI: ${s3Uri}`,
     );
   }
 }

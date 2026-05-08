@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors
 } from '@nestjs/common';
@@ -11,13 +12,14 @@ import { UploadService } from './upload.service';
 export class UploadController {
   constructor(private uploadService: UploadService) { }
 
-  @Post('file')
+  @Post(':companyId/file')
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
+    @Query('companyId') companyId: string,
   ): Promise<any> {
     try {
-      const result = await this.uploadService.uploadFile(file);
+      const result = await this.uploadService.uploadFile(file, companyId);
       return {
         success: true,
         message: 'Arquivo enviado com sucesso',

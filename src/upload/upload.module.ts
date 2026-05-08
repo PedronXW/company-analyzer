@@ -2,7 +2,6 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 
 // Application Layer
-import { FileUploadService } from '@/jobs/file-upload.service';
 import { UploadService } from './upload.service';
 
 // Infrastructure Layer - Repositories
@@ -18,6 +17,7 @@ import { FileUploadProcessor } from '@/jobs/file-upload.processor';
  * Responsabilidades:
  * - Upload para S3
  * - Adicionar jobs à fila de processamento assíncrono
+ * - Disparar job de identificação de empresa após o processamento
  */
 @Module({
   imports: [
@@ -25,9 +25,15 @@ import { FileUploadProcessor } from '@/jobs/file-upload.processor';
     BullModule.registerQueue({
       name: 'company/upload',
     }),
+    BullModule.registerQueue({
+      name: 'data/extraction',
+    }),
   ],
   controllers: [UploadController],
-  providers: [UploadService, FileUploadService, FileUploadProcessor],
-  exports: [UploadService, FileUploadService],
+  providers: [
+    UploadService,
+    FileUploadProcessor,
+  ],
+  exports: [UploadService],
 })
 export class UploadModule { }

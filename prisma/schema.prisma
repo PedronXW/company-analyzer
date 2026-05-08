@@ -21,7 +21,9 @@ model File {
   uploadedAt  DateTime   @default(now())
   processedAt DateTime?
   status      String     @default("pending") // pending, processed, failed
+  company     Company    @relation(fields: [companyId], references: [id])
   analyses    Analysis[]
+  companyId   String
 }
 
 // --- NÚCLEO DE IDENTIDADE ---
@@ -37,6 +39,7 @@ model Company {
   // Relacionamentos
   analyses  Analysis[]
   situation Situation?
+  files     File[]
 }
 
 // --- NÚCLEO DE ANÁLISE DE DOCUMENTOS (PDF) ---

@@ -1,7 +1,9 @@
-import { FileUploadService } from '@/jobs/file-upload.service';
+import { FILE_UPLOAD_QUEUE } from '@/prisma/prisma.constants';
 import { PrismaService } from '@/prisma/prisma.service';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
+import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 
 /**
@@ -18,7 +20,8 @@ export class UploadService {
 
   constructor(
     private prisma: PrismaService,
-    private fileUploadService: FileUploadService,
+    @InjectQueue(FILE_UPLOAD_QUEUE)
+    private readonly uploadQueue: Queue,
   ) {
     this.initializeS3();
   }
@@ -47,7 +50,19 @@ export class UploadService {
 
   async uploadFile(
     file: Express.Multer.File,
+    companyId: string,
   ): Promise<{ id: string }> {
+
+    const company = await this.prisma.company.findUnique({
+      where: {
+        id: companyId
+      }
+    })
+
+    if (!company) {
+      throw new Error("Company not found")
+    }
+
     const s3Bucket = process.env.S3_BUCKET;
     const s3Region = process.env.S3_REGION;
 
@@ -75,16 +90,15 @@ export class UploadService {
         uploadedAt: new Date(),
         processedAt: null,
         status: 'pending',
+        companyId,
       },
     });
 
     this.logger.log(`Arquivo ${file.originalname} enviado para S3`);
 
-    // Adicionar job à fila para processamento assíncrono
-    await this.fileUploadService.queueProcessing(
-      uploadedFile.id,
-      uploadedFile.filename,
-    );
+    await this.uploadQueue.add('company/upload', {
+      fileId: uploadedFile.id
+    });
 
     return {
       id: uploadedFile.id,
