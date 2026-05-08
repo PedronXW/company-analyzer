@@ -8,6 +8,9 @@ import { PrismaModule } from './prisma/prisma.module';
 // Upload Module
 import { UploadModule } from './upload/upload.module';
 
+// Company Module
+import { CompanyModule } from './company/company.module';
+
 /**
  * Módulo principal da aplicação Company Analyzer.
  *
@@ -41,6 +44,9 @@ import { UploadModule } from './upload/upload.module';
 
     // Upload Module (Application Layer + Infrastructure Layer)
     UploadModule,
+
+    // Company Module
+    CompanyModule,
   ],
   controllers: [],
   providers: [],
