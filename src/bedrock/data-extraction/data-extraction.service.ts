@@ -1,5 +1,6 @@
 import { ConverseCommand, ConverseCommandInput, ConverseCommandOutput } from '@aws-sdk/client-bedrock-runtime';
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { z } from 'zod';
 import { BedrockService } from '../bedrock.service';
 
 /**
@@ -7,26 +8,65 @@ import { BedrockService } from '../bedrock.service';
  */
 export interface DataExtractionResponse {
 
-  referenceData: string | null;
-  period: string | null;
+  referenceData?: string | null;
+  period?: string | null;
 
   // Dados Fixos Extraídos (Métricas Financeiras)
-  revenue: number | null; // Receita Líquida
-  ebitda: number | null; // EBITDA
-  ebitdaMargin: number | null; // Margem EBITDA (%)
-  netProfit: number | null; // Lucro Líquido
-  netMargin: number | null; // Margem Líquida (%)
-  netDebt: number | null; // Dívida Líquida
-  leverage: number | null; // Dívida Líquida / EBITDA (Alavancagem)
-  fco: number | null; // Fluxo de Caixa Operacional
-  capex: number | null; // Investimentos
-  dividends: number | null; // Dividendos declarados no período
+  revenue?: number | null; // Receita Líquida
+  ebitda?: number | null; // EBITDA
+  ebitdaMargin?: number | null; // Margem EBITDA (%)
+  netProfit?: number | null; // Lucro Líquido
+  netMargin?: number | null; // Margem Líquida (%)
+  netDebt?: number | null; // Dívida Líquida
+  leverage?: number | null; // Dívida Líquida / EBITDA (Alavancagem)
+  fco?: number | null; // Fluxo de Caixa Operacional
+  capex?: number | null; // Investimentos
+  dividends?: number | null; // Dividendos declarados no período
 
   // Inteligência da IA
-  aiSensation: number | null; // Impacto pontual (0 a 10)
-  aiSummary: string | null; // Resumo da tese da IA para o período
-  projection: Record<string, unknown> | null; // Projeções para o próximo período
+  aiSensation?: number | null; // Impacto pontual (0 a 10)
+  aiSummary?: string | null; // Resumo da tese da IA para o período
+  projection?: Record<string, unknown> | null; // Projeções para o próximo período
 }
+
+/**
+ * Schema Zod para validação da resposta de extração.
+ * Todos os campos são opcionais para lidar com respostas incompletas da LLM.
+ * Suporta também estrutura com tools (bedrock tool use format).
+ */
+const DataExtractionResponseSchema = z.object({
+  referenceData: z.string().nullable().optional(),
+  period: z.string().nullable().optional(),
+  revenue: z.number().nullable().optional(),
+  ebitda: z.number().nullable().optional(),
+  ebitdaMargin: z.number().nullable().optional(),
+  netProfit: z.number().nullable().optional(),
+  netMargin: z.number().nullable().optional(),
+  netDebt: z.number().nullable().optional(),
+  leverage: z.number().nullable().optional(),
+  fco: z.number().nullable().optional(),
+  capex: z.number().nullable().optional(),
+  dividends: z.number().nullable().optional(),
+  aiSensation: z.number().nullable().optional(),
+  aiSummary: z.string().nullable().optional(),
+  projection: z.record(z.string(), z.unknown()).nullable().optional(),
+}).partial();
+
+/**
+ * Schema Zod para resposta com tools (Bedrock Tool Use Format).
+ * Estrutura: { output: { message: { content: [{ text: string }] } } }
+ */
+const ToolUseResponseSchema = z.object({
+  output: z.object({
+    message: z.object({
+      content: z.array(
+        z.object({
+          text: z.string(),
+        }),
+      ),
+    }),
+  }),
+});
 
 /**
  * Serviço especializado em extração de dados financeiros de empresas.
@@ -65,23 +105,13 @@ export class DataExtractionService {
   }
 
   /**
-   * Valida se o objeto parseado possui a estrutura esperada.
-   *
-   * Type guard que verifica a presença de todos os campos obrigatórios
-   * do schema DataExtractionResponse (mesmo que com valor null).
-   *
-   * @param data Objeto parseado da resposta do modelo
-   * @returns true se o objeto é válido, false caso contrário
-   */
-
-  /**
    * Extrai dados financeiros de uma empresa usando Amazon Bedrock Nova Premier.
    *
    * Processo:
    * 1. Constrói o prompt de extração de dados financeiros
    * 2. Envia requisição ao Bedrock com temperature 0 e maxTokens 2048
    * 3. Limpa a resposta de blocos Markdown
-   * 4. Valida a estrutura JSON retornada
+   * 4. Valida a estrutura JSON retornada com Zod Schema
    * 5. Retorna objeto tipado com dados financeiros da empresa
    *
    * Campos financeiros extraídos (conforme schema Analysis do Prisma):
@@ -106,7 +136,6 @@ export class DataExtractionService {
    * @example
    * ```typescript
    * const result = await service.extractFinancialData('s3://my-bucket/attachments/abc123');
-   * console.log(result.companyName); // 'Petrobras'
    * console.log(result.revenue); // 125000000000
    * console.log(result.netProfit); // 45000000000
    * ```
@@ -168,19 +197,12 @@ export class DataExtractionService {
         throw new Error(`Invalid JSON response from model: ${parseError}`);
       }
 
-      // Valida a estrutura da resposta
-      if (!this.isValidExtractionResponse(parsedData)) {
-        this.logger.error('Invalid extraction response structure', {
-          receivedFields: Object.keys(parsedData as object),
-        });
-        throw new Error(
-          'Response does not match expected DataExtractionResponse structure',
-        );
-      }
+      // Valida a estrutura da resposta com Zod Schema
+      const validatedData = DataExtractionResponseSchema.parse(parsedData);
 
       this.logger.log('Financial data extraction completed successfully');
 
-      return parsedData;
+      return validatedData;
     } catch (error) {
       this.logger.error(`Error extracting financial data: ${error}`);
 
@@ -225,14 +247,35 @@ export class DataExtractionService {
     <insight name="aiSummary">Resumo da tese de investimento da IA (até 500 caracteres)</insight>
     <insight name="projection">Projeções para o próximo período: { expectedRevenue, expectedNetProfit, expectedDividends }</insight>
     </ai_insights>
+    <response_schema>
+    <description>Retorne um objeto JSON com os seguintes campos opcionais:</description>
+    <fields>
+    <field name="referenceData">Dados de referência sobre a empresa</field>
+    <field name="period">Período analisado</field>
+    <field name="revenue">Receita Líquida</field>
+    <field name="ebitda">EBITDA</field>
+    <field name="ebitdaMargin">Margem EBITDA (%)</field>
+    <field name="netProfit">Lucro Líquido</field>
+    <field name="netMargin">Margem Líquida (%)</field>
+    <field name="netDebt">Dívida Líquida</field>
+    <field name="leverage">Alavancagem</field>
+    <field name="fco">Fluxo de Caixa Operacional</field>
+    <field name="capex">Investimentos</field>
+    <field name="dividends">Dividendos</field>
+    <field name="aiSensation">Impacto pontual (0-10)</field>
+    <field name="aiSummary">Resumo da tese da IA</field>
+    <field name="projection">Projeções para o próximo período</field>
+    </fields>
+    <constraints>
+    <constraint>Use null para campos não encontrados no documento</constraint>
+    <constraint>Valores monetários em números, não strings</constraint>
+    <constraint>Porcentagens como números (ex: 25.5 para 25.5%)</constraint>
+    <constraint>aiSensation entre 0 e 10</constraint>
+    </constraints>
+    </response_schema>
     <constraints>
     <constraint>Retornar APENAS o JSON, nada mais</constraint>
     <constraint>Use JSON válido, sem blocos markdown</constraint>
-    <constraint>Se um dado não estiver claro no documento, use null e reduza confidence</constraint>
-    <constraint>Valores monetários em números (ex: 125000000000), não strings</constraint>
-    <constraint>Porcentagens como números (ex: 25.5 para 25.5%)</constraint>
-    <constraint>aiSensation entre 0 e 10</constraint>
-    <constraint>confidence entre 0.0 e 1.0</constraint>
     </constraints>
     </instructions>
     </system>
