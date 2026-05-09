@@ -1,18 +1,23 @@
+import { DataExtractionResponse, DataExtractionService } from '@/bedrock/data-extraction/data-extraction.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 
 /**
- * Processador de jobs de identificação de empresa.
+ * Processador de jobs de extração de dados financeiros de empresa.
  *
  * Responsabilidades:
- * - Processar jobs adicionados à fila 'company/identification'
- * - Identificar empresas no documento usando Bedrock
+ * - Processar jobs adicionados à fila 'data/extraction'
+ * - Extrair dados financeiros da empresa usando Amazon Bedrock
  * - Salvar os resultados no banco de dados
  *
  * Arquitetura: Infrastructure Layer (DataExtractionProcessor)
  * Separa a infraestrutura de processamento da lógica de negócio.
+ *
+ * ONTOLOGIA DINÂMICA DE EVENTOS:
+ * - Application Layer: UploadController, UploadService (geração de jobs)
+ * - Infrastructure Layer: DataExtractionProcessor (processamento assíncrono)
  */
 @Processor('data/extraction', {
   concurrency: 1,
@@ -23,6 +28,7 @@ export class DataExtractionProcessor extends WorkerHost {
 
   constructor(
     private prisma: PrismaService,
+    private dataExtractionService: DataExtractionService,
   ) {
     super();
   }
@@ -31,33 +37,70 @@ export class DataExtractionProcessor extends WorkerHost {
     const { fileId } = job.data;
 
     this.logger.log(
-      `Processing company identification job for file ${fileId}`,
+      `Processing data extraction job for file ${fileId}`,
     );
 
     const file = await this.prisma.file.findUnique({
       where: {
-        id: fileId
-      }
-    })
+        id: fileId,
+      },
+    });
 
     if (!file) {
-      throw new Error("File not found")
+      throw new Error(`File not found: ${fileId}`);
     }
 
     try {
+      // Constrói o URI S3 completo para o arquivo
+      const s3Uri = `s3://panap-files/attachments/${fileId}`;
+
       this.logger.log(
-        `Company identification completed for file ${fileId}: ${file.companyId}`,
+        `Calling Bedrock for financial data extraction on file ${fileId}`,
       );
 
-      // Salvar os resultados no banco de dados
+      // Chama o serviço de Bedrock para extrair dados financeiros
+      const extractionData: DataExtractionResponse =
+        await this.dataExtractionService.extractFinancialData(s3Uri);
+
+      this.logger.log(
+        `Financial data extraction completed for file ${fileId}:`,
+        {
+          companyId: extractionData.companyId,
+          companyName: extractionData.companyName,
+          companyType: extractionData.companyType,
+          confidence: extractionData.confidence,
+          sector: extractionData.sector,
+          description: extractionData.description,
+          revenue: extractionData.revenue,
+          netProfit: extractionData.netProfit,
+          aiSensation: extractionData.aiSensation,
+        },
+      );
+
+      // Salva os dados financeiros no banco de dados
       await this.prisma.analysis.create({
         data: {
           fileId,
+          companyId: file.companyId,
+          revenue: extractionData.revenue,
+          ebitda: extractionData.ebitda,
+          ebitdaMargin: extractionData.ebitdaMargin,
+          netProfit: extractionData.netProfit,
+          netMargin: extractionData.netMargin,
+          netDebt: extractionData.netDebt,
+          leverage: extractionData.leverage,
+          fco: extractionData.fco,
+          capex: extractionData.capex,
+          dividends: extractionData.dividends,
+          aiSensation: extractionData.aiSensation,
+          aiSummary: extractionData.aiSummary,
+          period: extractionData.period,
+          referenceDate: extractionData.referenceDate
         },
       });
 
       this.logger.log(
-        `Saved company identification result for file ${fileId}`,
+        `Saved financial data extraction result for file ${fileId}`,
       );
     } catch (error) {
       this.logger.error(

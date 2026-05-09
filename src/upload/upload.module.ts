@@ -10,6 +10,10 @@ import { UploadController } from './upload.controller';
 
 // Infrastructure Layer - Workers
 import { FileUploadProcessor } from '@/jobs/file-upload.processor';
+import { DataExtractionProcessor } from '@/jobs/data-extraction.processor';
+
+// Infrastructure Layer - Bedrock
+import { BedrockModule } from '@/bedrock/bedrock.module';
 
 /**
  * Módulo de upload de arquivos.
@@ -17,11 +21,12 @@ import { FileUploadProcessor } from '@/jobs/file-upload.processor';
  * Responsabilidades:
  * - Upload para S3
  * - Adicionar jobs à fila de processamento assíncrono
- * - Disparar job de identificação de empresa após o processamento
+ * - Disparar job de extração de dados financeiros após o processamento
  */
 @Module({
   imports: [
     PrismaModule,
+    BedrockModule,
     BullModule.registerQueue({
       name: 'company/upload',
     }),
@@ -33,6 +38,7 @@ import { FileUploadProcessor } from '@/jobs/file-upload.processor';
   providers: [
     UploadService,
     FileUploadProcessor,
+    DataExtractionProcessor,
   ],
   exports: [UploadService],
 })
