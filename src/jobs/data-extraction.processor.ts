@@ -65,12 +65,6 @@ export class DataExtractionProcessor extends WorkerHost {
       this.logger.log(
         `Financial data extraction completed for file ${fileId}:`,
         {
-          companyId: extractionData.companyId,
-          companyName: extractionData.companyName,
-          companyType: extractionData.companyType,
-          confidence: extractionData.confidence,
-          sector: extractionData.sector,
-          description: extractionData.description,
           revenue: extractionData.revenue,
           netProfit: extractionData.netProfit,
           aiSensation: extractionData.aiSensation,
@@ -94,8 +88,8 @@ export class DataExtractionProcessor extends WorkerHost {
           dividends: extractionData.dividends,
           aiSensation: extractionData.aiSensation,
           aiSummary: extractionData.aiSummary,
-          period: extractionData.period,
-          referenceDate: extractionData.referenceDate
+          period: extractionData.period ?? '',
+          referenceDate: extractionData.referenceDate ?? ''
         },
       });
 

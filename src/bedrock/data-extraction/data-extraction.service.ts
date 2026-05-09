@@ -8,7 +8,7 @@ import { BedrockService } from '../bedrock.service';
  */
 export interface DataExtractionResponse {
 
-  referenceData?: string | null;
+  referenceDate?: string | null;
   period?: string | null;
 
   // Dados Fixos Extraídos (Métricas Financeiras)
@@ -35,7 +35,7 @@ export interface DataExtractionResponse {
  * Suporta também estrutura com tools (bedrock tool use format).
  */
 const DataExtractionResponseSchema = z.object({
-  referenceData: z.string().nullable().optional(),
+  referenceDate: z.string().nullable().optional(),
   period: z.string().nullable().optional(),
   revenue: z.number().nullable().optional(),
   ebitda: z.number().nullable().optional(),
@@ -151,7 +151,20 @@ export class DataExtractionService {
       messages: [
         {
           role: 'user',
-          content: [{ text: userPrompt }],
+          content: [
+            {
+              document: {
+                format: 'pdf',
+                name: 'Documento',
+                source: {
+                  s3Location: {
+                    uri: s3Uri,
+                    bucketOwner: process.env.AWS_ACCOUNT_ID || '',
+                  },
+                },
+              },
+            },
+            { text: userPrompt }],
         },
       ],
       system: [{ text: systemPrompt }],
