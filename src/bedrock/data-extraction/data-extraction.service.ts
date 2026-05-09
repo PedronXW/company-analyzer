@@ -69,6 +69,91 @@ const ToolUseResponseSchema = z.object({
 });
 
 /**
+ * Schema Zod para resposta com tools (Bedrock Tool Use Format).
+ * Estrutura: { tools: [{ toolSpec: {...}, toolUse: { name, input: {...} } }], toolChoice: {...} }
+ * Similar ao exemplo de validação de retorno.
+ */
+const DataExtractionToolResponseSchema = {
+  tools: [
+    {
+      toolSpec: {
+        name: 'data_extraction_formatter',
+        description: 'Sends the financial data extraction data in a structured format.',
+        inputSchema: {
+          json: {
+            type: 'object',
+            properties: {
+              referenceDate: {
+                type: 'string',
+                description: 'Data de referência do documento analisado.',
+              },
+              period: {
+                type: 'string',
+                description: 'Período analisado (ex: 2024-2025).',
+              },
+              revenue: {
+                type: 'number',
+                description: 'Receita Líquida.',
+              },
+              ebitda: {
+                type: 'number',
+                description: 'EBITDA.',
+              },
+              ebitdaMargin: {
+                type: 'number',
+                description: 'Margem EBITDA (%)',
+              },
+              netProfit: {
+                type: 'number',
+                description: 'Lucro Líquido.',
+              },
+              netMargin: {
+                type: 'number',
+                description: 'Margem Líquida (%)',
+              },
+              netDebt: {
+                type: 'number',
+                description: 'Dívida Líquida.',
+              },
+              leverage: {
+                type: 'number',
+                description: 'Dívida Líquida / EBITDA (Alavancagem).',
+              },
+              fco: {
+                type: 'number',
+                description: 'Fluxo de Caixa Operacional.',
+              },
+              capex: {
+                type: 'number',
+                description: 'Investimentos.',
+              },
+              dividends: {
+                type: 'number',
+                description: 'Dividendos declarados no período.',
+              },
+              aiSensation: {
+                type: 'number',
+                description: 'Impacto pontual (0 a 10).',
+              },
+              aiSummary: {
+                type: 'string',
+                description: 'Resumo da tese da IA para o período.',
+              },
+              projection: {
+                type: 'object',
+                description: 'Projeções para o próximo período.',
+              },
+            },
+            required: [],
+          },
+        },
+      },
+    },
+  ],
+  toolChoice: { tool: { name: 'data_extraction_formatter' } },
+};
+
+/**
  * Serviço especializado em extração de dados financeiros de empresas.
  *
  * Utiliza o modelo Amazon Nova Premier (amazon.nova-pro-v1:0) para:
@@ -168,6 +253,7 @@ export class DataExtractionService {
         },
       ],
       system: [{ text: systemPrompt }],
+      toolConfig: DataExtractionToolResponseSchema,
       inferenceConfig: {
         temperature: 0, // Determinismo total para extração de dados financeiros
         maxTokens: 2048,
