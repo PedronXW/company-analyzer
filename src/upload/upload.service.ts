@@ -6,6 +6,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 
+interface UploadFileDto {
+  period?: string;
+}
+
 /**
  * Serviço de upload de arquivos.
  *
@@ -27,23 +31,19 @@ export class UploadService {
   }
 
   private initializeS3() {
-    const minioUrl = process.env.MINIO_URL;
     const s3Bucket = process.env.S3_BUCKET;
-    const s3Region = process.env.S3_REGION;
+    const s3Region = process.env.AWS_REGION;
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
     // Só inicializa o S3Client se tiver todas as configurações
-    if (minioUrl && s3Bucket && s3Region && accessKeyId && secretAccessKey) {
+    if (s3Bucket && s3Region && accessKeyId && secretAccessKey) {
       this.s3Client = new S3Client({
-        endpoint: minioUrl,
         region: s3Region,
         credentials: {
           accessKeyId,
           secretAccessKey,
         },
-        // MinIO usa path-style addressing por padrão
-        forcePathStyle: true,
       });
     }
   }
@@ -51,6 +51,7 @@ export class UploadService {
   async uploadFile(
     file: Express.Multer.File,
     companyId: string,
+    uploadDto?: UploadFileDto,
   ): Promise<{ id: string }> {
 
     const company = await this.prisma.company.findUnique({
@@ -64,7 +65,6 @@ export class UploadService {
     }
 
     const s3Bucket = process.env.S3_BUCKET;
-    const s3Region = process.env.S3_REGION;
 
     const id = randomUUID();
 
@@ -97,7 +97,8 @@ export class UploadService {
     this.logger.log(`Arquivo ${file.originalname} enviado para S3`);
 
     await this.uploadQueue.add('company/upload', {
-      fileId: uploadedFile.id
+      fileId: uploadedFile.id,
+      period: uploadDto?.period,
     });
 
     return {

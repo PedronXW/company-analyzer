@@ -33,8 +33,8 @@ export class DataExtractionProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ fileId: string }>): Promise<void> {
-    const { fileId } = job.data;
+  async process(job: Job<{ fileId: string; period?: string; }>): Promise<void> {
+    const { fileId, period } = job.data;
 
     this.logger.log(
       `Processing data extraction job for file ${fileId}`,
@@ -52,7 +52,7 @@ export class DataExtractionProcessor extends WorkerHost {
 
     try {
       // Constrói o URI S3 completo para o arquivo
-      const s3Uri = `s3://panap-files/attachments/${fileId}`;
+      const s3Uri = `s3://panap-ravel-files/${fileId}`;
 
       this.logger.log(
         `Calling Bedrock for financial data extraction on file ${fileId}`,
@@ -88,8 +88,7 @@ export class DataExtractionProcessor extends WorkerHost {
           dividends: extractionData.dividends,
           aiSensation: extractionData.aiSensation,
           aiSummary: extractionData.aiSummary,
-          period: extractionData.period ?? '',
-          referenceDate: extractionData.referenceDate ?? ''
+          period: period ?? ''
         },
       });
 

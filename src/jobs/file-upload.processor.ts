@@ -63,11 +63,6 @@ export class FileUploadProcessor extends WorkerHost {
       `File ${fileId} (${file?.filename}) processed successfully`,
     );
 
-    // Disparar job de extração de dados financeiros após o processamento
-    // Passando o S3 URI para Bedrock
-    const s3Bucket = process.env.AWS_S3_BUCKET;
-    const s3Uri = `s3://${s3Bucket}/attachments/${fileId}`;
-
     // Usar a fila 'data/extraction' para extração de dados financeiros
     await this.dataExtractionQueue.add(
       'data/extraction',
@@ -77,7 +72,7 @@ export class FileUploadProcessor extends WorkerHost {
     );
 
     this.logger.log(
-      `Disparado job de extração de dados financeiros para file ${fileId} com S3 URI: ${s3Uri}`,
+      `Disparado job de extração de dados financeiros para file ${fileId}`,
     );
   }
 }

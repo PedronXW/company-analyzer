@@ -7,10 +7,6 @@ import { BedrockService } from '../bedrock.service';
  * Interface para a resposta de extração de dados financeiros da empresa.
  */
 export interface DataExtractionResponse {
-
-  referenceDate?: string | null;
-  period?: string | null;
-
   // Dados Fixos Extraídos (Métricas Financeiras)
   revenue?: number | null; // Receita Líquida
   ebitda?: number | null; // EBITDA
@@ -35,8 +31,6 @@ export interface DataExtractionResponse {
  * Suporta também estrutura com tools (bedrock tool use format).
  */
 const DataExtractionResponseSchema = z.object({
-  referenceDate: z.string().nullable().optional(),
-  period: z.string().nullable().optional(),
   revenue: z.number().nullable().optional(),
   ebitda: z.number().nullable().optional(),
   ebitdaMargin: z.number().nullable().optional(),
@@ -52,21 +46,6 @@ const DataExtractionResponseSchema = z.object({
   projection: z.record(z.string(), z.unknown()).nullable().optional(),
 }).partial();
 
-/**
- * Schema Zod para resposta com tools (Bedrock Tool Use Format).
- * Estrutura: { output: { message: { content: [{ text: string }] } } }
- */
-const ToolUseResponseSchema = z.object({
-  output: z.object({
-    message: z.object({
-      content: z.array(
-        z.object({
-          text: z.string(),
-        }),
-      ),
-    }),
-  }),
-});
 
 /**
  * Schema Zod para resposta com tools (Bedrock Tool Use Format).
@@ -83,14 +62,6 @@ const DataExtractionToolResponseSchema = {
           json: {
             type: 'object',
             properties: {
-              referenceDate: {
-                type: 'string',
-                description: 'Data de referência do documento analisado.',
-              },
-              period: {
-                type: 'string',
-                description: 'Período analisado (ex: 2024-2025).',
-              },
               revenue: {
                 type: 'number',
                 description: 'Receita Líquida.',
@@ -167,7 +138,7 @@ const DataExtractionToolResponseSchema = {
 @Injectable()
 export class DataExtractionService {
   private readonly logger = new Logger(DataExtractionService.name);
-  private readonly modelId = 'us.amazon.nova-pro-v1:0';
+  private readonly modelId = 'us.amazon.nova-2-lite-v1:0';
 
   constructor(private readonly bedrockService: BedrockService) {
     this.logger.log('DataExtractionService initialized');
@@ -274,7 +245,11 @@ export class DataExtractionService {
         throw new Error('Empty response from Bedrock');
       }
 
-      const rawText = response.output.message.content[0].text;
+
+
+      const rawText = JSON.stringify(response.output.message.content[0]?.toolUse?.input) as string;
+
+      console.log(rawText)
 
       if (!rawText) {
         throw new Error('No text content in Bedrock response');
@@ -349,8 +324,6 @@ export class DataExtractionService {
     <response_schema>
     <description>Retorne um objeto JSON com os seguintes campos opcionais:</description>
     <fields>
-    <field name="referenceData">Dados de referência sobre a empresa</field>
-    <field name="period">Período analisado</field>
     <field name="revenue">Receita Líquida</field>
     <field name="ebitda">EBITDA</field>
     <field name="ebitdaMargin">Margem EBITDA (%)</field>
@@ -385,9 +358,11 @@ export class DataExtractionService {
    * Constrói o prompt do usuário com o conteúdo do documento.
    *
    * @param s3Uri URI do arquivo no S3 (ex: s3://bucket/attachments/fileId)
+   * @param period Período fornecido via body (opcional)
    * @returns Prompt do usuário em formato XML
    */
   private buildExtractionUserPrompt(s3Uri: string): string {
+
     return `
     <user>
     <task>Analisar o seguinte documento financeiro e extrair dados estruturados sobre a empresa</task>

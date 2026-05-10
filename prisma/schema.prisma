@@ -49,9 +49,8 @@ model Analysis {
   companyId String
   company   Company @relation(fields: [companyId], references: [id])
 
-  period        String // Ex: 1T26, 4T25
-  referenceDate DateTime // Data do documento/lançamento
-  status        ReviewStatus @default(PENDING) // A trava de segurança humana
+  period String // Ex: 1T26, 4T25
+  status ReviewStatus @default(PENDING) // A trava de segurança humana
 
   // Dados Fixos Extraídos (Métricas Financeiras)
   revenue      Float? // Receita Líquida
