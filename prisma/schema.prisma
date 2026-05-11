@@ -40,6 +40,7 @@ model Company {
   analyses  Analysis[]
   situation Situation?
   files     File[]
+  signals   Signal[]
 }
 
 // --- NÚCLEO DE ANÁLISE DE DOCUMENTOS (PDF) ---
@@ -74,6 +75,9 @@ model Analysis {
   reviewedAt DateTime?
   createdAt  DateTime  @default(now())
   fileId     String
+
+  // Relacionamento com Signals
+  signals AnalysisSignal[]
 
   @@index([companyId])
   @@index([period])
@@ -116,4 +120,43 @@ enum Trend {
   MELHORANDO
   ESTAVEL
   PIORANDO
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signal — Sinais de mercado recebidos do news-analyzer
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SignalSource {
+  SENTIMENT
+  FUNDAMENTAL
+  PRICE
+}
+
+model Signal {
+  id        String       @id @default(uuid())
+  ticker    String
+  source    SignalSource
+  score     Float // -1 a 1
+  reasoning String?      @db.Text
+  processed Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Relacionamento com Analysis
+  analyses  AnalysisSignal[]
+  company   Company?         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String?
+
+  @@index([ticker])
+  @@index([source])
+  @@index([processed])
+}
+
+model AnalysisSignal {
+  analysisId String
+  signalId   String
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  signal     Signal   @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  @@id([analysisId, signalId])
 }

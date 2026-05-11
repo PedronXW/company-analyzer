@@ -11,6 +11,9 @@ import { UploadModule } from './upload/upload.module';
 // Company Module
 import { CompanyModule } from './company/company.module';
 
+// Signals Module
+import { SignalsModule } from './signals/signals.module';
+
 /**
  * Módulo principal da aplicação Company Analyzer.
  *
@@ -47,6 +50,9 @@ import { CompanyModule } from './company/company.module';
 
     // Company Module
     CompanyModule,
+
+    // Signals Module
+    SignalsModule,
   ],
   controllers: [],
   providers: [],
