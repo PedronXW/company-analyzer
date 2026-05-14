@@ -104,6 +104,8 @@ export class DataAnalysisService {
     const systemPrompt = this.buildAnalysisSystemPrompt();
     const userPrompt = this.buildAnalysisUserPrompt(rawExtractionId, rawData);
 
+    console.log(rawData)
+
     const input: ConverseCommandInput = {
       modelId: this.modelId,
       messages: [
@@ -122,6 +124,10 @@ export class DataAnalysisService {
     try {
       this.logger.log(`Starting analysis for RawExtraction ${rawExtractionId}`);
 
+      // Log preview dos dados sendo enviados
+      const rawDataStr = JSON.stringify(rawData, null, 2);
+      this.logger.debug(`Raw data preview: ${rawDataStr.substring(0, 1000)}`);
+
       const client = this.bedrockService.getClient();
       const command = new ConverseCommand(input);
       const response: ConverseCommandOutput = await client.send(command);
@@ -137,6 +143,7 @@ export class DataAnalysisService {
       }
 
       this.logger.debug(`Raw analysis response received (${rawText.length} chars)`);
+      this.logger.debug(`Raw analysis response preview: ${rawText.substring(0, 1000)}`);
 
       const cleanedText = this.cleanJsonResponse(rawText);
 
@@ -150,11 +157,26 @@ export class DataAnalysisService {
         throw new Error(`Invalid JSON response from model: ${parseError}`);
       }
 
-      const validatedData = DataAnalysisResponseSchema.parse(parsedData);
+      const validatedDataRaw = DataAnalysisResponseSchema.parse(parsedData);
+
+      // Limpeza extra: se aiSummary for uma string muito longa (provavelmente uma explicação),
+      // substituir por null para garantir consistência
+      // Aumentado de 150 para 500 para permitir resumos razoáveis
+      let aiSummary = validatedDataRaw.aiSummary;
+      if (aiSummary && aiSummary.length > 500) {
+        this.logger.warn(`aiSummary too long (${aiSummary.length} chars), setting to null`);
+        aiSummary = null;
+      }
 
       this.logger.log(`Analysis completed for RawExtraction ${rawExtractionId}`);
 
-      return validatedData;
+      // Calcular métricas ausentes se possível
+      const finalData = this.calculateMissingMetrics(validatedDataRaw, rawData);
+
+      return {
+        ...finalData,
+        aiSummary: aiSummary,
+      };
     } catch (error) {
       this.logger.error(`Error analyzing extraction ${rawExtractionId}: ${error}`);
 
@@ -168,6 +190,45 @@ export class DataAnalysisService {
         'Failed to analyze extraction from Bedrock',
       );
     }
+  }
+
+  /**
+   * Calcula métricas ausentes com base nos dados disponíveis.
+   * Usa fórmulas financeiras para calcular margens e outras métricas.
+   */
+  private calculateMissingMetrics(
+    data: DataAnalysisResponse,
+    _rawData: unknown,
+  ): DataAnalysisResponse {
+    const result = { ...data };
+
+    // Calcular ebitdaMargin se tiver ebitda e revenue
+    if (
+      result.ebitda !== null &&
+      result.ebitda !== undefined &&
+      result.revenue !== null &&
+      result.revenue !== undefined &&
+      result.revenue !== 0 &&
+      result.ebitdaMargin === null
+    ) {
+      result.ebitdaMargin = (result.ebitda / result.revenue) * 100;
+      this.logger.debug(`Calculated ebitdaMargin: ${result.ebitdaMargin}`);
+    }
+
+    // Calcular netMargin se tiver netProfit e revenue
+    if (
+      result.netProfit !== null &&
+      result.netProfit !== undefined &&
+      result.revenue !== null &&
+      result.revenue !== undefined &&
+      result.revenue !== 0 &&
+      result.netMargin === null
+    ) {
+      result.netMargin = (result.netProfit / result.revenue) * 100;
+      this.logger.debug(`Calculated netMargin: ${result.netMargin}`);
+    }
+
+    return result;
   }
 
   /**
@@ -190,11 +251,16 @@ export class DataAnalysisService {
 
     <INPUT FORMAT YOU WILL RECEIVE>
     {
-      "extractedData": [
-        {"name": "Receita Líquida", "value": "125000", "unit": "milhões de BRL"},
-        {"name": "EBITDA", "value": "42000", "unit": "milhões de BRL"},
-        {"name": "EBITDA Margin", "value": "33.6", "unit": "%"},
-        {"name": "Lucro Líquido", "value": "28500", "unit": "milhões de BRL"}
+      "sections": [
+        {
+          "sectionTitle": "Nome da Seção",
+          "data": [
+            {"name": "Receita Líquida", "value": "125000", "unit": "milhões de BRL"},
+            {"name": "EBITDA", "value": "42000", "unit": "milhões de BRL"},
+            {"name": "EBITDA Margin", "value": "33.6", "unit": "%"},
+            {"name": "Lucro Líquido", "value": "28500", "unit": "milhões de BRL"}
+          ]
+        }
       ]
     }
     </INPUT FORMAT YOU WILL RECEIVE>
@@ -226,14 +292,31 @@ export class DataAnalysisService {
     </OUTPUT FORMAT>
 
     <INSTRUCTIONS>
-    1. Analise o array extractedData para encontrar as métricas
-    2. Se o valor estiver em milhões ou bilhões, converta para unidades (BRL)
-    3. Calcule margens se só tiver valores absolutos
-    4. Se não encontrar uma métrica, use null
-    5. Gere aiSensation baseada no desempenho (0-10)
-    6. Gere aiSummary com 1-2 frases sobre desempenho e perspectivas
-    7. Crie projeções apenas se houver tendências claras
+    1. Analise o array sections[].data para encontrar as métricas
+    2. Se o valor estiver em milhões ou bilhões, converta para unidades (BRL): multiply by 1,000,000 for millions, 1,000,000,000 for billions
+    3. **CALCULE as métricas ausentes usando estas fórmulas:**
+    4. - ebitdaMargin = (ebitda / revenue) * 100 SE tiver ebitda e revenue
+    5. - netMargin = (netProfit / revenue) * 100 SE tiver netProfit e revenue
+    6. - leverage = (netDebt / ebitda) SE tiver netDebt e ebitda
+    7. - fco = fluxo de caixa operacional (procurar por "FCO", "Fluxo de Caixa Operacional")
+    8. - capex = investimentos (procurar por "Capex", "Investimentos")
+    9. - dividends = dividendos pagos (procurar por "Dividendos", "Distribuição de resultados")
+    10. 4. Se não encontrar uma métrica, use null
+    11. 5. Gere aiSensation baseada no desempenho (0-10)
+    12. 6. **CRÍTICO: Se sections[].data estiver VAZIO para todas as seções ou não houver dados suficientes, aiSummary DEVE ser null - NÃO gere texto explicativo**
+    13. 7. Gere aiSummary apenas com 1-2 frases sobre desempenho e perspectivas SE houver dados válidos
+    14. 8. Crie projeções apenas se houver tendências claras e dados suficientes
     </INSTRUCTIONS>
+
+    <EXEMPLOS DE CALCULO>
+    Dados: revenue=100, ebitda=30, netProfit=20
+    Resultado esperado: ebitdaMargin=30, netMargin=20
+    </EXEMPLOS DE CALCULO>
+
+    <EXEMPLOS DE COMPORTAMENTO>
+    - Com dados: aiSummary = "A empresa apresentou crescimento de 15% na receita, impulsionado por aumentos de preços e expansão de mercado."
+    - Sem dados (arrays vazios): aiSummary = null (NÃO: "Não foram encontrados dados...")
+    </EXEMPLOS DE COMPORTAMENTO>
     `.trim();
   }
 

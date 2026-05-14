@@ -50,7 +50,8 @@ export class DataExtractionService {
     // Tenta extrair o JSON - buscar pelo primeiro { e correspondente }
     const firstBrace = cleaned.indexOf('{');
     if (firstBrace === -1) {
-      return cleaned;
+      this.logger.debug('No JSON object found in response');
+      return '';
     }
 
     // Contar chaves para achar o fechamento correto
@@ -77,6 +78,15 @@ export class DataExtractionService {
     const fixed = this.fixTruncatedJson(truncated);
     if (fixed) {
       return fixed;
+    }
+
+    this.logger.debug('Could not parse JSON - trying to extract array directly');
+
+    // Fallback: tentar extrair array diretamente (se o modelo retornou apenas um array)
+    const arrayStart = cleaned.indexOf('[');
+    const arrayEnd = cleaned.lastIndexOf(']');
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      return cleaned.substring(arrayStart, arrayEnd + 1).trim();
     }
 
     return cleaned;
@@ -249,11 +259,23 @@ export class DataExtractionService {
         return null;
       }
 
-      this.logger.debug(`Raw response received (${rawText.length} chars)`);
+      this.logger.debug(`Raw response received (${rawText.length} chars): ${rawText.substring(0, 500)}`);
+
+      // Se o rawText estiver vazio, logar mais contexto
+      if (rawText.length === 0 || rawText.trim() === '') {
+        this.logger.warn('Bedrock returned empty text content');
+        return null;
+      }
 
       // Remove blocos markdown antes do parsing
       const cleanedText = this.cleanJsonResponse(rawText);
-      this.logger.debug(`Cleaned response (${cleanedText.length} chars)`);
+      this.logger.debug(`Cleaned response (${cleanedText.length} chars): ${cleanedText}`);
+
+      // Se o cleanedText estiver vazio, tentar usar o rawText diretamente
+      if (!cleanedText || cleanedText.trim() === '') {
+        this.logger.warn('Cleaned response is empty, rawText:', rawText.substring(0, 1000));
+        return null;
+      }
 
       // Tenta fazer o parsing do JSON
       let parsedData: unknown;
@@ -266,14 +288,44 @@ export class DataExtractionService {
         return null;
       }
 
-      const result = parsedData as {
-        extractedData?: Array<{ name: string; value: string; unit?: string }>;
-      };
+      // Tenta extrair extractedData de diferentes formatos possíveis
+      let extractedData: Array<{ name: string; value: string; unit?: string }> = [];
+
+      this.logger.debug(`Parsed data type: ${typeof parsedData}, keys: ${Object.keys(parsedData || {})}`);
+
+      // Formato 1: Objeto com extractedData
+      if (parsedData && typeof parsedData === 'object') {
+        if ('extractedData' in parsedData && Array.isArray(parsedData.extractedData)) {
+          extractedData = parsedData.extractedData;
+          this.logger.debug(`Found extractedData array with ${extractedData.length} items`);
+        }
+        // Formato 2: Array direto no topo
+        else if (Array.isArray(parsedData)) {
+          extractedData = parsedData as any;
+          this.logger.debug(`Found array directly at root with ${extractedData.length} items`);
+        }
+        // Formato 3: Tenta extrair arrays aninhados
+        else {
+          for (const key in parsedData) {
+            if (Array.isArray((parsedData as any)[key])) {
+              extractedData = (parsedData as any)[key];
+              this.logger.debug(`Found array in key: ${key} with ${extractedData.length} items`);
+              break;
+            }
+          }
+        }
+      }
+
+      this.logger.log(`Extracted ${extractedData.length} data points from response`);
+
+      if (extractedData.length === 0) {
+        this.logger.warn('No data points extracted - model response:', cleanedText.substring(0, 1000));
+      }
 
       this.logger.log('Raw financial data extraction completed successfully');
 
       return {
-        extractedData: result.extractedData || [],
+        extractedData: extractedData,
         metadata: {
           modelId: this.modelId,
           extractedAt: new Date().toISOString(),
@@ -300,6 +352,7 @@ export class DataExtractionService {
     2. Identifique e extraia métricas, KPIs, indicadores financeiros
     3. Capture valores numéricos com suas respectivas unidades
     4. Inclua TODOS os dados relevantes - não omita nada
+    5. Se NÃO HOUVER dados para extrair, retorne array VAZIO: {"extractedData":[]}
     </OBJECTIVE>
     `;
 
@@ -315,14 +368,26 @@ export class DataExtractionService {
 
     prompt += `
     IMPORTANTE: Extraia TODOS os dados existentes - não há limite de campos.
-    Retorne APENAS o seguinte formato JSON, sem texto adicional:
-    {"extractedData":[{"name":"Nome","value":"Valor","unit":"Unidade"}]}
+    Retorne APENAS um objeto JSON válido, sem texto adicional.
 
-    - Use o valor EXATO como aparece no documento (inclusive formatos como "1,234.56")
+    FORMATO DE RESPOSTA:
+    {"extractedData":[{"name":"Nome da Métrica","value":"Valor","unit":"Unidade"}]}
+
+    EXEMPLOS:
+    - Se encontrar "Receita Líquida: R$ 1.000" -> {"extractedData":[{"name":"Receita Líquida","value":"1.000","unit":"BRL"}]}
+    - Se encontrar "Lucro Líquido: 500 milhões" -> {"extractedData":[{"name":"Lucro Líquido","value":"500","unit":"milhões de BRL"}]}
+
+    REGRAS:
+    - O JSON DEVE ter a chave extractedData com um array
+    - Cada item deve ter name, value e opcional unit
+    - Use o valor EXATO como aparece no documento
     - Inclua TODOS os dados encontrados - não omita nenhum
-    - Se um dado não tiver unidade, use unit: null ou omita o campo unit
+    - Se um dado não tiver unidade, use null ou omita o campo unit
+    - NÃO adicione texto antes ou depois do JSON
+    - NÃO use markdown
     - NÃO repita campos já extraídos
-    - Se houver múltiplos valores para o mesmo indicador (ex:ano a ano), extraia todos
+    - Se houver múltiplos valores para o mesmo indicador, extraia todos
+    - NÃO adicione explicações ou texto adicional
     `.trim();
 
     return prompt;
@@ -333,22 +398,27 @@ export class DataExtractionService {
    */
   private buildExtractionUserPrompt(s3Uri: string, sectionName?: string): string {
     let prompt = `
-    Process the document at ${s3Uri} and extract ALL financial and structural data.
+    <DOCUMENT>
+    Process the document at ${s3Uri}.
+    </DOCUMENT>
 
     <TASK>
-    1. Leia o documento COMPLETO
-    2. Identifique TODAS as métricas, KPIs e dados financeiros
-    3. Extraia TODOS os valores numéricos com suas unidades
-    4. Não limite a campos específicos - extraia tudo que for possível
+    1. EXTRIA TODOS os dados financeiros e métricas do documento
+    2. Identifique TODOS os valores numéricos com suas unidades
+    3. Não deixe passar nenhum dado relevante
     </TASK>
 
-    Return ONLY the JSON format as specified in the system prompt.
+    <INSTRUCTIONS>
+    - Return ONLY the JSON object with extractedData key
+    - Se NÃO HOUVER dados para extrair, retorne: {"extractedData":[]}
+    - NÃO adicione texto explicativo, markdown ou qualquer outro conteúdo
+    </INSTRUCTIONS>
     `;
 
     if (sectionName) {
       prompt += `
       <SEÇÃO ESPECÍFICA>
-      Process the "${sectionName}" section of the document.
+      Process the ${sectionName} section of the document.
       Extract ALL data from this section - do not omit anything.
       </SEÇÃO ESPECÍFICA>
       `;
@@ -412,6 +482,8 @@ export class DataExtractionService {
     </TASK>
 
     Return ONLY the JSON format as specified in the system prompt.
+    CRITICAL: O modelo deve retornar APENAS um objeto JSON válido com a chave "extractedData".
+    NÃO adicione texto explicativo, markdown ou qualquer outro conteúdo.
     `;
 
     if (sectionName) {

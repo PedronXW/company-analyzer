@@ -61,13 +61,18 @@ export class DataAnalysisProcessor extends WorkerHost {
 
     try {
       // Agrupar dados por seção para análise
-      const sectionsData = sections.map((section) => ({
-        sectionTitle: section.title,
-        data: (section.data as any)?.extractedItems || [],
-      }));
+      const sectionsData = sections.map((section) => {
+        // section.data é uma string JSON, precisa parsear
+        const sectionDataObj = typeof section.data === 'string' ? JSON.parse(section.data) : section.data;
+        return {
+          sectionTitle: section.title,
+          data: sectionDataObj?.extractedItems || [],
+        };
+      });
 
       this.logger.log(
         `Calling Bedrock for analysis of ${sections.length} sections`,
+        { sections: sectionsData.map(s => ({ title: s.sectionTitle, itemCount: s.data.length })) },
       );
 
       const analysisData: DataAnalysisResponse =

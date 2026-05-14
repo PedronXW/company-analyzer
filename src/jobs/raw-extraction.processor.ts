@@ -75,6 +75,8 @@ export class RawExtractionProcessor extends WorkerHost {
             // Processar o PDF completo, mas focar na seção específica
             const sectionData = await this.dataExtractionService.extractFinancialData(s3Uri, section.title);
 
+            this.logger.log(`Extraction result for ${section.title}: ${sectionData.extractedData.length} items`);
+
             // Atualizar Section.data com os dados extraídos
             await this.prisma.section.update({
               where: { id: section.id },
