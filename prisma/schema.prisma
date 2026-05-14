@@ -14,16 +14,40 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model File {
-  id          String     @id() @default(uuid())
-  filename    String
-  type        String
-  size        Int
-  uploadedAt  DateTime   @default(now())
-  processedAt DateTime?
-  status      String     @default("pending") // pending, processed, failed
-  company     Company    @relation(fields: [companyId], references: [id])
-  analyses    Analysis[]
-  companyId   String
+  id            String       @id() @default(uuid())
+  filename      String
+  type          String
+  size          Int
+  uploadedAt    DateTime     @default(now())
+  processedAt   DateTime?
+  status        String       @default("pending") // pending, processed, analyzed, failed
+  sections      Section[]
+  company       Company      @relation(fields: [companyId], references: [id])
+  analyses      Analysis[]
+  companyId     String
+}
+
+// --- NÚCLEO DE SEÇÕES DE DOCUMENTO ---
+
+model Section {
+  id            String       @id @default(uuid())
+  fileId        String
+  file          File         @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?      @db.Text
+  pageStart     Int
+  pageEnd       Int
+  orderIndex    Int
+  type          String       @default("NORMAL") // NORMAL (para processar), IGNORE (para pular)
+  data          Json         @default("{}") // Dados extraídos da seção
+  status        String       @default("pending") // pending, analyzed, failed
+  error         String?      @db.Text
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([fileId])
+  @@index([orderIndex])
+  @@index([type])
 }
 
 // --- NÚCLEO DE IDENTIDADE ---
@@ -82,6 +106,8 @@ model Analysis {
   @@index([companyId])
   @@index([period])
 }
+
+// --- NÚCLEO DE EXTRAÇÃO BRUTA (TEMPORÁRIO PARA ANALISE) ---
 
 // --- NÚCLEO DE STATUS DE LONGO PRAZO ---
 

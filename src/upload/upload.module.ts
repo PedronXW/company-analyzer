@@ -10,10 +10,13 @@ import { UploadController } from './upload.controller';
 
 // Infrastructure Layer - Workers
 import { FileUploadProcessor } from '@/jobs/file-upload.processor';
-import { DataExtractionProcessor } from '@/jobs/data-extraction.processor';
+import { PdfAnalysisProcessor } from '@/jobs/pdf-analysis.processor';
+import { RawExtractionProcessor } from '@/jobs/raw-extraction.processor';
+import { DataAnalysisProcessor } from '@/jobs/data-analysis.processor';
 
 // Infrastructure Layer - Bedrock
 import { BedrockModule } from '@/bedrock/bedrock.module';
+import { DATA_ANALYSIS, DATA_EXTRACTION, PDF_ANALYSIS } from '@/prisma/prisma.constants';
 
 /**
  * Módulo de upload de arquivos.
@@ -21,24 +24,32 @@ import { BedrockModule } from '@/bedrock/bedrock.module';
  * Responsabilidades:
  * - Upload para S3
  * - Adicionar jobs à fila de processamento assíncrono
- * - Disparar job de extração de dados financeiros após o processamento
+ * - Disparar job de análise de PDF após o processamento
+ *
+ * Fluxo (Nova Arquitetura):
+ * 1. FileUploadProcessor (company/upload) -> processa file e adiciona job pdf/analyze
+ * 2. PdfAnalysisProcessor (pdf/analyze) -> analisa PDF, extrai seções, salva em File.sections
+ * 3. RawExtractionProcessor (data/extraction) -> extrai dados seção por seção usando File.sections
+ * 4. DataAnalysisProcessor (data/analyze) -> analisa dados do RawExtraction, salva Analysis
  */
 @Module({
   imports: [
     PrismaModule,
     BedrockModule,
-    BullModule.registerQueue({
-      name: 'company/upload',
-    }),
-    BullModule.registerQueue({
-      name: 'data/extraction',
-    }),
+    BullModule.registerQueue(
+      { name: 'company/upload' },
+      { name: PDF_ANALYSIS },
+      { name: DATA_EXTRACTION },
+      { name: DATA_ANALYSIS },
+    ),
   ],
   controllers: [UploadController],
   providers: [
     UploadService,
     FileUploadProcessor,
-    DataExtractionProcessor,
+    PdfAnalysisProcessor,
+    RawExtractionProcessor,
+    DataAnalysisProcessor,
   ],
   exports: [UploadService],
 })

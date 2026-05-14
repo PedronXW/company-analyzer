@@ -1,139 +1,30 @@
 import { ConverseCommand, ConverseCommandInput, ConverseCommandOutput } from '@aws-sdk/client-bedrock-runtime';
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
-import { z } from 'zod';
+import { Injectable, Logger } from '@nestjs/common';
 import { BedrockService } from '../bedrock.service';
 
 /**
- * Interface para a resposta de extração de dados financeiros da empresa.
+ * Interface para a resposta de extração de dados financeiros.
  */
-export interface DataExtractionResponse {
-  // Dados Fixos Extraídos (Métricas Financeiras)
-  revenue?: number | null; // Receita Líquida
-  ebitda?: number | null; // EBITDA
-  ebitdaMargin?: number | null; // Margem EBITDA (%)
-  netProfit?: number | null; // Lucro Líquido
-  netMargin?: number | null; // Margem Líquida (%)
-  netDebt?: number | null; // Dívida Líquida
-  leverage?: number | null; // Dívida Líquida / EBITDA (Alavancagem)
-  fco?: number | null; // Fluxo de Caixa Operacional
-  capex?: number | null; // Investimentos
-  dividends?: number | null; // Dividendos declarados no período
-
-  // Inteligência da IA
-  aiSensation?: number | null; // Impacto pontual (0 a 10)
-  aiSummary?: string | null; // Resumo da tese da IA para o período
-  projection?: Record<string, unknown> | null; // Projeções para o próximo período
+export interface RawExtractionData {
+  extractedData: Array<{
+    name: string;
+    value: string;
+    unit?: string;
+  }>;
+  metadata: {
+    modelId: string;
+    extractedAt: string;
+  };
 }
 
 /**
- * Schema Zod para validação da resposta de extração.
- * Todos os campos são opcionais para lidar com respostas incompletas da LLM.
- * Suporta também estrutura com tools (bedrock tool use format).
- */
-const DataExtractionResponseSchema = z.object({
-  revenue: z.number().nullable().optional(),
-  ebitda: z.number().nullable().optional(),
-  ebitdaMargin: z.number().nullable().optional(),
-  netProfit: z.number().nullable().optional(),
-  netMargin: z.number().nullable().optional(),
-  netDebt: z.number().nullable().optional(),
-  leverage: z.number().nullable().optional(),
-  fco: z.number().nullable().optional(),
-  capex: z.number().nullable().optional(),
-  dividends: z.number().nullable().optional(),
-  aiSensation: z.number().nullable().optional(),
-  aiSummary: z.string().nullable().optional(),
-  projection: z.record(z.string(), z.unknown()).nullable().optional(),
-}).partial();
-
-
-/**
- * Schema Zod para resposta com tools (Bedrock Tool Use Format).
- * Estrutura: { tools: [{ toolSpec: {...}, toolUse: { name, input: {...} } }], toolChoice: {...} }
- * Similar ao exemplo de validação de retorno.
- */
-const DataExtractionToolResponseSchema = {
-  tools: [
-    {
-      toolSpec: {
-        name: 'data_extraction_formatter',
-        description: 'Sends the financial data extraction data in a structured format.',
-        inputSchema: {
-          json: {
-            type: 'object',
-            properties: {
-              revenue: {
-                type: 'number',
-                description: 'Receita Líquida.',
-              },
-              ebitda: {
-                type: 'number',
-                description: 'EBITDA.',
-              },
-              ebitdaMargin: {
-                type: 'number',
-                description: 'Margem EBITDA (%)',
-              },
-              netProfit: {
-                type: 'number',
-                description: 'Lucro Líquido.',
-              },
-              netMargin: {
-                type: 'number',
-                description: 'Margem Líquida (%)',
-              },
-              netDebt: {
-                type: 'number',
-                description: 'Dívida Líquida.',
-              },
-              leverage: {
-                type: 'number',
-                description: 'Dívida Líquida / EBITDA (Alavancagem).',
-              },
-              fco: {
-                type: 'number',
-                description: 'Fluxo de Caixa Operacional.',
-              },
-              capex: {
-                type: 'number',
-                description: 'Investimentos.',
-              },
-              dividends: {
-                type: 'number',
-                description: 'Dividendos declarados no período.',
-              },
-              aiSensation: {
-                type: 'number',
-                description: 'Impacto pontual (0 a 10).',
-              },
-              aiSummary: {
-                type: 'string',
-                description: 'Resumo da tese da IA para o período.',
-              },
-              projection: {
-                type: 'object',
-                description: 'Projeções para o próximo período.',
-              },
-            },
-            required: [],
-          },
-        },
-      },
-    },
-  ],
-  toolChoice: { tool: { name: 'data_extraction_formatter' } },
-};
-
-/**
- * Serviço especializado em extração de dados financeiros de empresas.
+ * Serviço especializado em extração BRUTA de dados financeiros de empresas.
  *
- * Utiliza o modelo Amazon Nova Premier (amazon.nova-pro-v1:0) para:
- * - Identificar empresas mencionadas no documento
- * - Extrair métricas financeiras estruturadas
- * - Avaliar o nível de confiança da extração
- * - Gerar insights sobre o negócio da empresa
+ * Estratégia: Prompt de texto direto com instruções claras para extrair qualquer
+ * dado financeiro ou estrutural do documento. O modelo retorna JSON no texto da resposta.
  *
- * Configurado com temperature 0 para determinismo total.
+ * Suporte a seções: É possível indicar qual seção do documento focar no prompt.
+ * Isso permite processar o mesmo PDF em diferentes seções sem precisar dividir o arquivo.
  */
 @Injectable()
 export class DataExtractionService {
@@ -145,63 +36,159 @@ export class DataExtractionService {
   }
 
   /**
-   * Remove blocos de Markdown da resposta do modelo.
-   *
-   * Modelos LLM frequentemente retornam JSON dentro de blocos ```json...```.
-   * Esta função remove esses wrappers para permitir parsing direto.
-   *
-   * @param text Texto bruto retornado pelo modelo
-   * @returns Texto limpo, pronto para JSON.parse()
+   * Remove blocos de Markdown e extrai JSON da resposta do modelo.
+   * Tenta consertar JSON truncado (strings sem fechamento, arrays sem fechamento).
    */
   private cleanJsonResponse(text: string): string {
-    return text
+    // Remove blocos markdown
+    let cleaned = text
       .replace(/```json\s*/gi, '')
       .replace(/```\s*/g, '')
+      .replace(/```/g, '')
       .trim();
+
+    // Tenta extrair o JSON - buscar pelo primeiro { e correspondente }
+    const firstBrace = cleaned.indexOf('{');
+    if (firstBrace === -1) {
+      return cleaned;
+    }
+
+    // Contar chaves para achar o fechamento correto
+    let depth = 0;
+    let lastValidEnd = -1;
+    for (let i = firstBrace; i < cleaned.length; i++) {
+      if (cleaned[i] === '{') depth++;
+      if (cleaned[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          lastValidEnd = i + 1;
+        }
+      }
+    }
+
+    // Se achou o fechamento, usar até lá
+    if (lastValidEnd > 0) {
+      cleaned = cleaned.substring(firstBrace, lastValidEnd);
+      return cleaned.trim();
+    }
+
+    // Se não achou fechamento, tentar consertar JSON truncado
+    const truncated = cleaned.substring(firstBrace);
+    const fixed = this.fixTruncatedJson(truncated);
+    if (fixed) {
+      return fixed;
+    }
+
+    return cleaned;
   }
 
   /**
-   * Extrai dados financeiros de uma empresa usando Amazon Bedrock Nova Premier.
-   *
-   * Processo:
-   * 1. Constrói o prompt de extração de dados financeiros
-   * 2. Envia requisição ao Bedrock com temperature 0 e maxTokens 2048
-   * 3. Limpa a resposta de blocos Markdown
-   * 4. Valida a estrutura JSON retornada com Zod Schema
-   * 5. Retorna objeto tipado com dados financeiros da empresa
-   *
-   * Campos financeiros extraídos (conforme schema Analysis do Prisma):
-   * - revenue: Receita Líquida
-   * - ebitda: EBITDA
-   * - ebitdaMargin: Margem EBITDA (%)
-   * - netProfit: Lucro Líquido
-   * - netMargin: Margem Líquida (%)
-   * - netDebt: Dívida Líquida
-   * - leverage: Dívida Líquida / EBITDA (Alavancagem)
-   * - fco: Fluxo de Caixa Operacional
-   * - capex: Investimentos
-   * - dividends: Dividendos declarados
-   * - aiSensation: Impacto pontual (0 a 10)
-   * - aiSummary: Resumo da tese da IA
-   * - projection: Projeções para o próximo período
+   * Tenta consertar JSON truncado adicionando fechamentos faltantes.
+   * Foca em fechar objetos individuais dentro do array extractedData.
+   */
+  private fixTruncatedJson(json: string): string | null {
+    if (!json) return null;
+
+    // Tenta encontrar o último objeto completo ou parcial
+    // Procura por padrões de objetos truncados: {"name": "...", "value": "...", "unit": "..."
+    const lastIncompleteObject = json.match(/{"name":\s*"[^"]*"\s*,\s*"value":\s*"[^"]*"(?:\s*,\s*"unit":\s*"[^"]*")?\s*$/);
+
+    if (lastIncompleteObject) {
+      const lastMatch = lastIncompleteObject[0];
+      // Encontrar onde esse objeto começa no JSON
+      const lastObjStart = json.lastIndexOf(lastMatch);
+      if (lastObjStart > -1) {
+        // Pegar o JSON antes do objeto truncado
+        const jsonBefore = json.substring(0, lastObjStart);
+
+        // Contar fechamentos necessários (apenas brackets para arrays)
+        let openBracketsBefore = (jsonBefore.match(/\[/g) || []).length;
+        let closeBracketsBefore = (jsonBefore.match(/\]/g) || []).length;
+
+        let fixed = jsonBefore.trim();
+
+        // Fechar o array se necessário
+        while (openBracketsBefore > closeBracketsBefore) {
+          fixed += '\n    ],';
+          closeBracketsBefore++;
+        }
+
+        // Fechar o objeto anterior se houver uma vírgula pendente
+        if (fixed.endsWith(',')) {
+          fixed = fixed.slice(0, -1);
+        }
+        fixed += '\n  }';
+
+        return fixed;
+      }
+    }
+
+    // Fallback mais agressivo: tentar fechar o que está aberto
+    const openBracesCount = (json.match(/{/g) || []).length;
+    const closeBracesCount = (json.match(/}/g) || []).length;
+    const openBracketsCount = (json.match(/\[/g) || []).length;
+    const closeBracketsCount = (json.match(/\]/g) || []).length;
+
+    if (openBracesCount > closeBracesCount || openBracketsCount > closeBracketsCount) {
+      let fixed = json;
+      let currentOpenBraces = closeBracesCount;
+      let currentOpenBrackets = closeBracketsCount;
+
+      // Fechar objetos primeiro (mais profundos)
+      while (openBracesCount > currentOpenBraces) {
+        fixed += '}';
+        currentOpenBraces++;
+      }
+      // Fechar arrays
+      while (openBracketsCount > currentOpenBrackets) {
+        fixed += ']';
+        currentOpenBrackets++;
+      }
+      return fixed;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extrai dados financeiros BRUTOS de uma empresa usando Amazon Bedrock Nova 2 Lite.
    *
    * @param s3Uri URI do arquivo no S3 (ex: s3://bucket/attachments/fileId)
-   * @returns Dados financeiros extraídos da empresa
-   * @throws InternalServerErrorException em caso de erro na comunicação ou parsing
-   *
-   * @example
-   * ```typescript
-   * const result = await service.extractFinancialData('s3://my-bucket/attachments/abc123');
-   * console.log(result.revenue); // 125000000000
-   * console.log(result.netProfit); // 45000000000
-   * ```
+   * @param sectionName Opcional: nome da seção específica a ser analisada
+   * @returns Dados brutos extraídos da empresa (formato JSON no texto)
    */
-  async extractFinancialData(
-    s3Uri: string,
-  ): Promise<DataExtractionResponse> {
-    const systemPrompt = this.buildExtractionSystemPrompt();
-    const userPrompt = this.buildExtractionUserPrompt(s3Uri);
+  async extractFinancialData(s3Uri: string, sectionName?: string): Promise<RawExtractionData> {
+    const systemPrompt = this.buildExtractionSystemPrompt(sectionName);
+    const userPrompt = this.buildExtractionUserPrompt(s3Uri, sectionName);
 
+    const result = await this.tryExtractFinancialData(s3Uri, systemPrompt, userPrompt);
+
+    if (result) {
+      return result;
+    }
+
+    // Fallback: tentar com prompt mais simples se o primeiro falhar
+    this.logger.warn('Retrying extraction with simplified prompt');
+    const simplifiedSystemPrompt = this.buildSimplifiedSystemPrompt(sectionName);
+    const simplifiedUserPrompt = this.buildSimplifiedUserPrompt(s3Uri, sectionName);
+    const fallbackResult = await this.tryExtractFinancialData(s3Uri, simplifiedSystemPrompt, simplifiedUserPrompt);
+
+    if (fallbackResult) {
+      return fallbackResult;
+    }
+
+    throw new Error('Failed to extract financial data after retry');
+  }
+
+  /**
+   * Tenta extrair dados financeiros com os prompts fornecidos.
+   * Retorna null se falhar, ou o resultado se bem-sucedido.
+   */
+  private async tryExtractFinancialData(
+    s3Uri: string,
+    systemPrompt: string,
+    userPrompt: string,
+  ): Promise<RawExtractionData | null> {
     const input: ConverseCommandInput = {
       modelId: this.modelId,
       messages: [
@@ -220,45 +207,53 @@ export class DataExtractionService {
                 },
               },
             },
-            { text: userPrompt }],
+            { text: userPrompt },
+          ],
         },
       ],
       system: [{ text: systemPrompt }],
-      toolConfig: DataExtractionToolResponseSchema,
       inferenceConfig: {
-        temperature: 0, // Determinismo total para extração de dados financeiros
-        maxTokens: 2048,
+        temperature: 0.1,
+        // Usando 8192 para não exceder o limite do modelo
+        maxTokens: 8192,
       },
     };
 
     try {
       this.logger.debug(
-        `Starting financial data extraction with S3 URI: ${s3Uri}`,
+        `Starting raw financial data extraction with S3 URI: ${s3Uri}`,
       );
 
       const client = this.bedrockService.getClient();
       const command = new ConverseCommand(input);
       const response: ConverseCommandOutput = await client.send(command);
 
+      this.logger.debug(`Bedrock stopReason: ${response.stopReason}`);
+
+      // Detecta se a resposta foi truncada por max_tokens
+      const isTruncated = response.stopReason === 'max_tokens';
+      if (isTruncated) {
+        this.logger.warn('Response was truncated by max_tokens limit');
+      }
+
       // Valida presença de conteúdo na resposta
       if (!response.output?.message?.content?.[0]) {
-        throw new Error('Empty response from Bedrock');
+        this.logger.warn('Empty response from Bedrock');
+        return null;
       }
 
+      const rawText = response.output.message.content?.[0]?.text || '';
 
-
-      const rawText = JSON.stringify(response.output.message.content[0]?.toolUse?.input) as string;
-
-      console.log(rawText)
-
-      if (!rawText) {
-        throw new Error('No text content in Bedrock response');
+      if (!rawText || rawText.trim().length === 0) {
+        this.logger.warn('No text content in Bedrock response');
+        return null;
       }
+
+      this.logger.debug(`Raw response received (${rawText.length} chars)`);
 
       // Remove blocos markdown antes do parsing
       const cleanedText = this.cleanJsonResponse(rawText);
-
-      this.logger.debug(`Raw response received (${cleanedText.length} chars)`);
+      this.logger.debug(`Cleaned response (${cleanedText.length} chars)`);
 
       // Tenta fazer o parsing do JSON
       let parsedData: unknown;
@@ -268,114 +263,166 @@ export class DataExtractionService {
         this.logger.error(`JSON parse error: ${parseError}`, {
           rawResponse: cleanedText.substring(0, 500),
         });
-        throw new Error(`Invalid JSON response from model: ${parseError}`);
+        return null;
       }
 
-      // Valida a estrutura da resposta com Zod Schema
-      const validatedData = DataExtractionResponseSchema.parse(parsedData);
+      const result = parsedData as {
+        extractedData?: Array<{ name: string; value: string; unit?: string }>;
+      };
 
-      this.logger.log('Financial data extraction completed successfully');
+      this.logger.log('Raw financial data extraction completed successfully');
 
-      return validatedData;
+      return {
+        extractedData: result.extractedData || [],
+        metadata: {
+          modelId: this.modelId,
+          extractedAt: new Date().toISOString(),
+        },
+      };
     } catch (error) {
-      this.logger.error(`Error extracting financial data: ${error}`);
+      this.logger.error(`Error extracting raw financial data: ${error}`);
 
-      if (error instanceof Error) {
-        throw new InternalServerErrorException(
-          `Failed to extract financial data: ${error.message}`,
-        );
-      }
-
-      throw new InternalServerErrorException(
-        'Failed to extract financial data from Bedrock',
-      );
+      return null;
     }
   }
 
   /**
-   * Constrói o prompt do sistema para extração de dados financeiros.
-   *
-   * @returns Prompt do sistema em formato XML
+   * Constrói o prompt do sistema para extração BRUTA de dados financeiros.
+   * Foco: extrair TODOS os dados existentes no documento - sem limitação de campos.
    */
-  private buildExtractionSystemPrompt(): string {
-    return `
-    <system>
-    <role>Analista Financeiro Especialista com IA</role>
-    <instructions>
-    <objective>Extrair métricas financeiras e informações estruturadas sobre a empresa a partir do documento fornecido</objective>
-    <output_format>Retornar APENAS um objeto JSON válido, sem markdown, sem comentários</output_format>
-    <financial_metrics>
-    <metric name="revenue">Receita Líquida total do período</metric>
-    <metric name="ebitda">EBITDA ajustado</metric>
-    <metric name="ebitdaMargin">Margem EBITDA em porcentagem (ex: 25.5)</metric>
-    <metric name="netProfit">Lucro Líquido total</metric>
-    <metric name="netMargin">Margem Líquida em porcentagem</metric>
-    <metric name="netDebt">Dívida Líquida (Dívida Bruta - Caixa)</metric>
-    <metric name="leverage">Alavancagem: Dívida Líquida / EBITDA</metric>
-    <metric name="fco">Fluxo de Caixa Operacional</metric>
-    <metric name="capex">Investimentos em Capital (Capex)</metric>
-    <metric name="dividends">Dividendos declarados no período</metric>
-    </financial_metrics>
-    <ai_insights>
-    <insight name="aiSensation">Impacto pontual da empresa (0 a 10) baseado em desempenho financeiro</insight>
-    <insight name="aiSummary">Resumo da tese de investimento da IA (até 500 caracteres)</insight>
-    <insight name="projection">Projeções para o próximo período: { expectedRevenue, expectedNetProfit, expectedDividends }</insight>
-    </ai_insights>
-    <response_schema>
-    <description>Retorne um objeto JSON com os seguintes campos opcionais:</description>
-    <fields>
-    <field name="revenue">Receita Líquida</field>
-    <field name="ebitda">EBITDA</field>
-    <field name="ebitdaMargin">Margem EBITDA (%)</field>
-    <field name="netProfit">Lucro Líquido</field>
-    <field name="netMargin">Margem Líquida (%)</field>
-    <field name="netDebt">Dívida Líquida</field>
-    <field name="leverage">Alavancagem</field>
-    <field name="fco">Fluxo de Caixa Operacional</field>
-    <field name="capex">Investimentos</field>
-    <field name="dividends">Dividendos</field>
-    <field name="aiSensation">Impacto pontual (0-10)</field>
-    <field name="aiSummary">Resumo da tese da IA</field>
-    <field name="projection">Projeções para o próximo período</field>
-    </fields>
-    <constraints>
-    <constraint>Use null para campos não encontrados no documento</constraint>
-    <constraint>Valores monetários em números, não strings</constraint>
-    <constraint>Porcentagens como números (ex: 25.5 para 25.5%)</constraint>
-    <constraint>aiSensation entre 0 e 10</constraint>
-    </constraints>
-    </response_schema>
-    <constraints>
-    <constraint>Retornar APENAS o JSON, nada mais</constraint>
-    <constraint>Use JSON válido, sem blocos markdown</constraint>
-    </constraints>
-    </instructions>
-    </system>
+  private buildExtractionSystemPrompt(sectionName?: string): string {
+    let prompt = `
+    Você é um Analista Financeiro Senior com acesso a um documento corporativo completo.
+    Sua tarefa é extrair TODOS os dados financeiros e estruturais disponíveis no documento.
+
+    <OBJECTIVE>
+    1. EXTRIA TODOS os dados encontrados - não limite a campos específicos
+    2. Identifique e extraia métricas, KPIs, indicadores financeiros
+    3. Capture valores numéricos com suas respectivas unidades
+    4. Inclua TODOS os dados relevantes - não omita nada
+    </OBJECTIVE>
+    `;
+
+    if (sectionName) {
+      prompt += `
+      <FOCO DA EXTRAÇÃO>
+      Você deve focar NA SEÇÃO "${sectionName}" DO DOCUMENTO.
+      Extraia TODOS os dados relevantes desta seção específica.
+      Não ignore nenhum dado - extraia tudo que for possível.
+      </FOCO DA EXTRAÇÃO>
+      `;
+    }
+
+    prompt += `
+    IMPORTANTE: Extraia TODOS os dados existentes - não há limite de campos.
+    Retorne APENAS o seguinte formato JSON, sem texto adicional:
+    {"extractedData":[{"name":"Nome","value":"Valor","unit":"Unidade"}]}
+
+    - Use o valor EXATO como aparece no documento (inclusive formatos como "1,234.56")
+    - Inclua TODOS os dados encontrados - não omita nenhum
+    - Se um dado não tiver unidade, use unit: null ou omita o campo unit
+    - NÃO repita campos já extraídos
+    - Se houver múltiplos valores para o mesmo indicador (ex:ano a ano), extraia todos
     `.trim();
+
+    return prompt;
   }
 
   /**
    * Constrói o prompt do usuário com o conteúdo do documento.
-   *
-   * @param s3Uri URI do arquivo no S3 (ex: s3://bucket/attachments/fileId)
-   * @param period Período fornecido via body (opcional)
-   * @returns Prompt do usuário em formato XML
    */
-  private buildExtractionUserPrompt(s3Uri: string): string {
+  private buildExtractionUserPrompt(s3Uri: string, sectionName?: string): string {
+    let prompt = `
+    Process the document at ${s3Uri} and extract ALL financial and structural data.
 
-    return `
-    <user>
-    <task>Analisar o seguinte documento financeiro e extrair dados estruturados sobre a empresa</task>
-    <document>
-    <s3_location>${s3Uri}</s3_location>
-    <format>pdf</format>
-    </document>
-    <instruction>
-    Extraia todas as métricas financeiras disponíveis e gere insights sobre a empresa.
-    Se某些 dados não estiverem claros, use null e ajuste o confidence accordingly.
-    Foque em dados financeiros recentes e relevantes para análise de investimento.
-    </instruction>
-    </user>
+    <TASK>
+    1. Leia o documento COMPLETO
+    2. Identifique TODAS as métricas, KPIs e dados financeiros
+    3. Extraia TODOS os valores numéricos com suas unidades
+    4. Não limite a campos específicos - extraia tudo que for possível
+    </TASK>
+
+    Return ONLY the JSON format as specified in the system prompt.
+    `;
+
+    if (sectionName) {
+      prompt += `
+      <SEÇÃO ESPECÍFICA>
+      Process the "${sectionName}" section of the document.
+      Extract ALL data from this section - do not omit anything.
+      </SEÇÃO ESPECÍFICA>
+      `;
+    }
+
+    return prompt.trim();
+  }
+
+  /**
+   * Prompt do sistema simplificado para fallback quando o principal falha.
+   * Foco: extrair todos os dados essenciais sem limitação.
+   */
+  private buildSimplifiedSystemPrompt(sectionName?: string): string {
+    let prompt = `
+    Você é um Analista Financeiro Senior com acesso a um documento corporativo completo.
+    Sua tarefa é extrair TODOS os dados financeiros disponíveis no documento.
+
+    <OBJECTIVE>
+    1. EXTRIA TODOS os dados encontrados - não limite a campos específicos
+    2. Identifique e extraia métricas, KPIs, indicadores financeiros
+    3. Capture valores numéricos com suas respectivas unidades
+    4. Inclua TODOS os dados relevantes - não omita nada
+    </OBJECTIVE>
+    `;
+
+    if (sectionName) {
+      prompt += `
+      <FOCO DA EXTRAÇÃO>
+      Você deve focar NA SEÇÃO "${sectionName}" DO DOCUMENTO.
+      Extraia TODOS os dados relevantes desta seção específica.
+      Não ignore nenhum dado - extraia tudo que for possível.
+      </FOCO DA EXTRAÇÃO>
+      `;
+    }
+
+    prompt += `
+    IMPORTANTE: Extraia TODOS os dados existentes - não há limite de campos.
+    Retorne APENAS o seguinte formato JSON, sem texto adicional:
+    {"extractedData":[{"name":"Nome","value":"Valor","unit":"Unidade"}]}
+
+    - Use o valor EXATO como aparece no documento
+    - Inclua TODOS os dados encontrados - não omita nenhum
+    - Se um dado não tiver unidade, use unit: null ou omita o campo unit
+    - NÃO repita campos já extraídos
     `.trim();
+
+    return prompt;
+  }
+
+  /**
+   * Prompt do usuário simplificado para fallback.
+   */
+  private buildSimplifiedUserPrompt(s3Uri: string, sectionName?: string): string {
+    let prompt = `
+    Process the document at ${s3Uri} and extract ALL available financial data.
+
+    <TASK>
+    1. Leia o documento COMPLETO
+    2. Extraia TODOS os dados financeiros e estruturais
+    3. Não limite a campos específicos - extraia tudo que for possível
+    </TASK>
+
+    Return ONLY the JSON format as specified in the system prompt.
+    `;
+
+    if (sectionName) {
+      prompt += `
+      <SEÇÃO ESPECÍFICA>
+      Process the "${sectionName}" section of the document.
+      Extract ALL data from this section - do not omit anything.
+      </SEÇÃO ESPECÍFICA>
+      `;
+    }
+
+    return prompt.trim();
   }
 }

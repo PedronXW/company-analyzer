@@ -1,4 +1,4 @@
-import { DATA_EXTRACTION } from '@/prisma/prisma.constants';
+import { DATA_EXTRACTION, DATA_ANALYSIS, PDF_ANALYSIS } from '@/prisma/prisma.constants';
 import { PrismaService } from '@/prisma/prisma.service';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
@@ -10,7 +10,7 @@ import { Job, Queue } from 'bullmq';
  * Responsabilidades:
  * - Processar jobs adicionados à fila 'company/upload'
  * - Atualizar status do arquivo para 'processed' no banco de dados
- * - Disparar job de extração de dados financeiros após o processamento
+ * - Disparar job de análise de PDF após o processamento
  *
  * Arquitetura: Infrastructure Layer (FileUploadProcessor)
  * Separa a infraestrutura de processamento da lógica de negócio.
@@ -24,8 +24,8 @@ export class FileUploadProcessor extends WorkerHost {
 
   constructor(
     private prisma: PrismaService,
-    @InjectQueue(DATA_EXTRACTION)
-    private readonly dataExtractionQueue: Queue,
+    @InjectQueue(PDF_ANALYSIS)
+    private readonly pdfAnalysisQueue: Queue,
   ) {
     super();
   }
@@ -63,16 +63,16 @@ export class FileUploadProcessor extends WorkerHost {
       `File ${fileId} (${file?.filename}) processed successfully`,
     );
 
-    // Usar a fila 'data/extraction' para extração de dados financeiros
-    await this.dataExtractionQueue.add(
-      'data/extraction',
+    // Usar a fila 'pdf/analyze' para analisar o PDF e extrair seções
+    await this.pdfAnalysisQueue.add(
+      'pdf/analyze',
       {
         fileId,
       }
     );
 
     this.logger.log(
-      `Disparado job de extração de dados financeiros para file ${fileId}`,
+      `Disparado job de análise de PDF para file ${fileId}`,
     );
   }
 }

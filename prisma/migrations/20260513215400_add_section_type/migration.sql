@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Section" ADD COLUMN "type" TEXT NOT NULL DEFAULT 'NORMAL';
