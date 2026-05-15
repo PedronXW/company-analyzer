@@ -4,7 +4,7 @@ import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { Queue } from 'bullmq';
-import { DATA_ANALYSIS } from '@/prisma/prisma.constants';
+import { DATA_ANALYSIS, FLUXO_ANALYSIS } from '@/prisma/prisma.constants';
 
 /**
  * Processador de jobs de extração BRUTA de dados financeiros de empresa.
@@ -14,7 +14,7 @@ import { DATA_ANALYSIS } from '@/prisma/prisma.constants';
  * 2. Usa indicação de seção no prompt para focar na área desejada
  * 3. Salva em Section.data (JSON) - um array com os dados extraídos
  * 4. Filtra apenas seções do tipo NORMAL (pula IGNORE como Notas Explicativas)
- * 5. Emite job 'data/analyze' para processar os dados brutos
+ * 5. Emite jobs para 'data/analyze' (processamento LLM) e 'fluxo/analyze' (comparação)
  *
  * Benefícios:
  * - Mantém estrutura visual do PDF (tabelas são compreendidas pelo modelo)
@@ -33,6 +33,7 @@ export class RawExtractionProcessor extends WorkerHost {
     private prisma: PrismaService,
     private dataExtractionService: DataExtractionService,
     @InjectQueue(DATA_ANALYSIS) private readonly dataAnalysisQueue: Queue,
+    @InjectQueue(FLUXO_ANALYSIS) private readonly fluxoAnalysisQueue: Queue,
   ) {
     super();
   }
@@ -109,13 +110,21 @@ export class RawExtractionProcessor extends WorkerHost {
         this.logger.log(`Extracted ${extractionData.extractedData.length} data points from PDF`);
       }
 
-      // Adicionar job para análise
+      // Adicionar job para análise de dados (processamento LLM)
       await this.dataAnalysisQueue.add('data/analyze', {
         fileId,
         period,
       });
 
-      this.logger.log(`Emitted analysis job for file ${fileId}`);
+      this.logger.log(`Emitted data/analyze job for file ${fileId}`);
+
+      // Adicionar job para análise de fluxo (comparação entre lançamentos)
+      // Aguardar um pouco para garantir que os dados estejam prontos
+      await this.fluxoAnalysisQueue.add('fluxo/analyze', {
+        fileId,
+      });
+
+      this.logger.log(`Emitted fluxo/analyze job for file ${fileId}`);
     } catch (error) {
       this.logger.error(`Failed to process raw extraction job for file ${fileId}: ${error}`);
       throw error;

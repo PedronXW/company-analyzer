@@ -4,7 +4,7 @@ import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { Queue } from 'bullmq';
-import { DATA_EXTRACTION } from '@/prisma/prisma.constants';
+import { DATA_EXTRACTION, PERIOD_EXTRACTION } from '@/prisma/prisma.constants';
 
 /**
  * Processador de jobs de análise de PDF.
@@ -29,6 +29,7 @@ export class PdfAnalysisProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pdfAnalysisService: PdfAnalysisService,
+    @InjectQueue(PERIOD_EXTRACTION) private readonly periodExtractionQueue: Queue,
     @InjectQueue(DATA_EXTRACTION) private readonly dataExtractionQueue: Queue,
   ) {
     super();
@@ -81,13 +82,13 @@ export class PdfAnalysisProcessor extends WorkerHost {
         `Saved PDF analysis results for file ${fileId} (${validatedSections.length} sections)`,
       );
 
-      // Disparar job de extração de dados para processar seções NORMAL
-      this.logger.log(`Disparando job de extração para file ${fileId}`);
-      await this.dataExtractionQueue.add('data/extraction', {
+      // Disparar job de extração de período para identificar o período do documento
+      this.logger.log(`Disparando job de extração de período para file ${fileId}`);
+      await this.periodExtractionQueue.add('period/extraction', {
         fileId,
       });
 
-      this.logger.log(`Job de extração disparado para file ${fileId}`);
+      this.logger.log(`Job de extração de período disparado para file ${fileId}`);
     } catch (error) {
       this.logger.error(`Failed to analyze PDF file ${fileId}: ${error}`);
 

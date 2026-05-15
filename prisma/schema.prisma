@@ -14,17 +14,20 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model File {
-  id            String       @id() @default(uuid())
-  filename      String
-  type          String
-  size          Int
-  uploadedAt    DateTime     @default(now())
-  processedAt   DateTime?
-  status        String       @default("pending") // pending, processed, analyzed, failed
-  sections      Section[]
-  company       Company      @relation(fields: [companyId], references: [id])
-  analyses      Analysis[]
-  companyId     String
+  id               String        @id() @default(uuid())
+  filename         String
+  type             String
+  size             Int
+  uploadedAt       DateTime      @default(now())
+  processedAt      DateTime?
+  status           String        @default("pending") // pending, processed, analyzed, failed
+  period           String?       // Período do documento (ex: "1T26") - extraído do PDF
+  periodConfidence Int?          // Confiança da extração do período (0-100)
+  sections         Section[]
+  company          Company       @relation(fields: [companyId], references: [id])
+  analyses         Analysis[]
+  fluxoAnalysis    FluxoAnalysis[]
+  companyId        String
 }
 
 // --- NÚCLEO DE SEÇÕES DE DOCUMENTO ---
@@ -185,4 +188,82 @@ model AnalysisSignal {
   signal     Signal   @relation(fields: [signalId], references: [id], onDelete: Cascade)
 
   @@id([analysisId, signalId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FluxoAnalysis — Análise de Comparação entre Lançamentos de Resultados
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Armazena análise de fluxo entre lançamentos de resultados.
+ * Cada FluxoAnalysis compara um lançamento atual com o anterior (ou referência).
+ *
+ * OBS: Armazenamos apenas os IDs dos arquivos (currentFileId, previousFileId)
+ * para evitar ambiguidade de relações. Para acessar os arquivos completos,
+ * use queries explícitas no service.
+ */
+model FluxoAnalysis {
+  id               String        @id @default(uuid())
+  currentFileId    String        // ID do File que está sendo comparado (atual)
+  currentFile      File          @relation(fields: [currentFileId], references: [id])
+
+  previousFileId   String?       // ID do File anterior (comparado)
+  // NOTA: previousFile não é mapeado como relação para evitar ambiguidade
+  // Acesse via query: prisma.file.findUnique({ where: { id: fluxoAnalysis.previousFileId } })
+
+  periodComparison String        // Ex: "1T26 vs 4T25"
+  comparisonType   ComparisonType @default(sequential) // YOY, QOQ, sequential
+
+  // Variações absolutas e percentuais para cada métrica
+  revenueChange     Float?       // Variação absoluta
+  revenueChangePct  Float?       // Variação percentual
+  revenueTrend      FluxoTrend?
+
+  ebitdaChange      Float?
+  ebitdaChangePct   Float?
+  ebitdaTrend       FluxoTrend?
+
+  netProfitChange   Float?
+  netProfitChangePct Float?
+  netProfitTrend    FluxoTrend?
+
+  fcoChange         Float?
+  fcoChangePct      Float?
+  fcoTrend          FluxoTrend?
+
+  dividendsChange   Float?
+  dividendsChangePct Float?
+  dividendsTrend    FluxoTrend?
+
+  // Indicadores de qualidade do fluxo
+  qualityScore      Float?       // 0-10, avalia consistência e qualidade dos dados
+  anomalyDetected   Boolean      @default(false) // Alerta de anomalia
+  anomalyReason     String?      @db.Text
+
+  // Resumo da análise de fluxo
+  fluxoSummary      String?      @db.Text // Resumo da evolução da empresa
+  fluxoSensation    Float?       // Sentimento do fluxo (0-10)
+
+  analyzedAt        DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([currentFileId])
+  @@index([previousFileId])
+}
+
+// --- ENUMS COMPLEMENTARES ---
+
+enum ComparisonType {
+  YOY       // Year-over-Year (mesmo período do ano anterior)
+  QOQ       // Quarter-over-Quarter (trimestre anterior)
+  sequential // Seqüencial (último lançamento disponível)
+}
+
+enum FluxoTrend {
+  ACCELERATING    // Crescimento acelerando (positivo e variação aumentando)
+  IMPROVING       // Melhorando (positivo mas desacelerando)
+  STABLE          // Estável (variação próxima de 0 ou constante)
+  DECLINING       // Decrescendo (negativo mas estabilizando)
+  DETERIORATING   // Piorando (negativo e piorando)
 }

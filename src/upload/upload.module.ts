@@ -16,7 +16,7 @@ import { DataAnalysisProcessor } from '@/jobs/data-analysis.processor';
 
 // Infrastructure Layer - Bedrock
 import { BedrockModule } from '@/bedrock/bedrock.module';
-import { DATA_ANALYSIS, DATA_EXTRACTION, PDF_ANALYSIS } from '@/prisma/prisma.constants';
+import { DATA_ANALYSIS, DATA_EXTRACTION, PDF_ANALYSIS, FLUXO_ANALYSIS, PERIOD_EXTRACTION } from '@/prisma/prisma.constants';
 
 /**
  * Módulo de upload de arquivos.
@@ -31,6 +31,7 @@ import { DATA_ANALYSIS, DATA_EXTRACTION, PDF_ANALYSIS } from '@/prisma/prisma.co
  * 2. PdfAnalysisProcessor (pdf/analyze) -> analisa PDF, extrai seções, salva em File.sections
  * 3. RawExtractionProcessor (data/extraction) -> extrai dados seção por seção usando File.sections
  * 4. DataAnalysisProcessor (data/analyze) -> analisa dados do RawExtraction, salva Analysis
+ * 5. FluxoAnalysisProcessor (fluxo/analyze) -> compara lançamentos entre si
  */
 @Module({
   imports: [
@@ -41,6 +42,8 @@ import { DATA_ANALYSIS, DATA_EXTRACTION, PDF_ANALYSIS } from '@/prisma/prisma.co
       { name: PDF_ANALYSIS },
       { name: DATA_EXTRACTION },
       { name: DATA_ANALYSIS },
+      { name: PERIOD_EXTRACTION },
+      { name: FLUXO_ANALYSIS },
     ),
   ],
   controllers: [UploadController],

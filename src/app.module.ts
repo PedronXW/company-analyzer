@@ -14,6 +14,9 @@ import { CompanyModule } from './company/company.module';
 // Signals Module
 import { SignalsModule } from './signals/signals.module';
 
+// Jobs Module
+import { JobsModule } from './jobs/jobs.module';
+
 /**
  * Módulo principal da aplicação Company Analyzer.
  *
@@ -50,6 +53,9 @@ import { SignalsModule } from './signals/signals.module';
 
     // Company Module
     CompanyModule,
+
+    // Jobs Module (processadores de filas)
+    JobsModule,
 
     // Signals Module
     SignalsModule,
